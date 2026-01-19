@@ -244,7 +244,7 @@
     import { getFirestore, doc, setDoc, deleteDoc, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
     // ---------------------------------------------------------
-    // 【最重要】Firebase設定：必ずご自身の情報を入力してください
+    // Firebase Config
     // ---------------------------------------------------------
     let firebaseConfig = {
         apiKey: "",
@@ -255,12 +255,16 @@
         appId: ""
     };
 
-    // 環境からの自動読み込み（GitHub Pages等で使う設定）
     try {
         if (typeof __firebase_config !== 'undefined' && __firebase_config) {
             firebaseConfig = JSON.parse(__firebase_config);
         }
     } catch(e) {}
+
+    // ---------------------------------------------------------
+    // appIdの決定 (Rule 1準拠)
+    // ---------------------------------------------------------
+    const appId = typeof __app_id !== 'undefined' ? __app_id : "my-guitar-app";
 
     // State
     let isAdmin = false;
@@ -268,7 +272,6 @@
     let events = [];
     let students = [];
     let user = null;
-    const appId = typeof __app_id !== 'undefined' ? __app_id : 'my-guitar-app-v1';
 
     // DOM Elements
     const calendarDays = document.getElementById('calendar-days');
@@ -466,14 +469,21 @@
 
     const handleCellDrop = async (date) => {
         if (!user || !db) return;
-        if (draggedStudentObj) {
-            const [h, m] = draggedStudentObj.time.split(':').map(Number);
-            const id = Date.now().toString();
-            await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', id), { id, date, student: draggedStudentObj.name, start: draggedStudentObj.time, end: `${String(h + 1).padStart(2, '0')}:${String(m).padStart(2, '0')}`, type: 'individual', guitar: draggedStudentObj.guitar });
-            draggedStudentObj = null;
-        } else if (draggedEventId) {
-            dropTargetDate = date; dragChoiceModal.classList.remove('hidden');
-        }
+        try {
+            if (draggedStudentObj) {
+                const [h, m] = draggedStudentObj.time.split(':').map(Number);
+                const id = Date.now().toString();
+                await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', id), { 
+                    id, date, student: draggedStudentObj.name, 
+                    start: draggedStudentObj.time, 
+                    end: `${String(h + 1).padStart(2, '0')}:${String(m).padStart(2, '0')}`, 
+                    type: 'individual', guitar: draggedStudentObj.guitar 
+                });
+                draggedStudentObj = null;
+            } else if (draggedEventId) {
+                dropTargetDate = date; dragChoiceModal.classList.remove('hidden');
+            }
+        } catch (e) { console.error("Drop Error:", e); }
     };
 
     // Firebase Initialization
@@ -482,15 +492,16 @@
         renderCalendar(); 
         
         if (!firebaseConfig.apiKey) {
-            currentMonthDisplay.textContent += " (設定待ち)";
+            currentMonthDisplay.textContent += " (Config Error)";
             return;
         }
 
         try {
-            const app = initializeApp(firebaseConfig);
-            authInstance = getAuth(app);
-            db = getFirestore(app);
+            const firebaseApp = initializeApp(firebaseConfig);
+            authInstance = getAuth(firebaseApp);
+            db = getFirestore(firebaseApp);
 
+            // Rule 3: 認証を最初に行い、完了を待つ
             const performSignIn = async () => {
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                     await signInWithCustomToken(authInstance, __initial_auth_token);
@@ -498,27 +509,34 @@
                     await signInAnonymously(authInstance);
                 }
             };
+            
             await performSignIn();
 
+            // 認証状態の変化を監視
             onAuthStateChanged(authInstance, (u) => {
                 user = u;
-                if (!user) return; 
+                if (!user) return; // 認証が済むまでFirestore操作を行わない
 
                 const eventsRef = collection(db, 'artifacts', appId, 'public', 'data', 'events');
                 const studentsRef = collection(db, 'artifacts', appId, 'public', 'data', 'students');
 
+                // 成功とエラーのコールバックをセット
                 onSnapshot(eventsRef, (snap) => {
                     events = snap.docs.map(d => d.data());
                     renderCalendar();
-                }, (error) => {
-                    console.error("Firestore Listen Error (Events):", error);
+                }, (err) => {
+                    console.error("Firestore Listen Error (Events):", err);
+                    if (err.code === 'permission-denied') {
+                        console.warn("Firebaseコンソールの『ルール』タブを確認してください。appIdが一致していない可能性があります。");
+                        console.warn("現在のappId:", appId);
+                    }
                 });
 
                 onSnapshot(studentsRef, (snap) => {
                     students = snap.docs.map(d => d.data());
                     if (isAdmin) renderStudents();
-                }, (error) => {
-                    console.error("Firestore Listen Error (Students):", error);
+                }, (err) => {
+                    console.error("Firestore Listen Error (Students):", err);
                 });
             });
         } catch(e) {
@@ -527,7 +545,7 @@
     };
 
     // Event Listeners
-    prevMonthBtn.onclick = () => { currentDate.setMonth(currentDate.getMonth() - 1); renderCalendar(); };
+    prevMonthBtn.onclick = () => { currentDate.setMonth(currentMonthDisplay.textContent.includes('Config') ? currentDate.getMonth() : currentDate.getMonth() - 1); renderCalendar(); };
     nextMonthBtn.onclick = () => { currentDate.setMonth(currentDate.getMonth() + 1); renderCalendar(); };
     adminToggleBtn.onclick = () => { 
         if (isAdmin) { 
@@ -559,30 +577,16 @@
     document.getElementById('add-student-btn').onclick = async () => {
         const nameInput = document.getElementById('new-student-name');
         const name = nameInput.value;
-        
-        if (!name.trim()) return;
-        
-        if (!db || !user) {
-            console.error("Firebaseへの接続が完了していません。少し待ってから再度お試しください。");
-            return;
-        }
-
-        try {
-            const id = Date.now().toString();
-            const studentData = { 
-                id, 
-                name: name.trim(), 
-                time: document.getElementById('new-student-time').value, 
-                guitar: document.getElementById('new-student-guitar').value 
-            };
-            
-            await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'students', id), studentData);
-            nameInput.value = '';
-        } catch (error) {
-            console.error("名簿登録エラー:", error);
-            if (error.code === 'permission-denied') {
-                console.error("Firestoreのセキュリティルールを確認してください。");
-            }
+        if (name.trim() && user && db) {
+            try {
+                const id = Date.now().toString();
+                await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'students', id), { 
+                    id, name: name.trim(), 
+                    time: document.getElementById('new-student-time').value, 
+                    guitar: document.getElementById('new-student-guitar').value 
+                });
+                nameInput.value = '';
+            } catch (e) { console.error("Save Student Error:", e); }
         }
     };
     
@@ -595,16 +599,18 @@
     
     eventForm.onsubmit = async (e) => {
         e.preventDefault(); if (!user || !db) return;
-        const id = document.getElementById('event-id').value || Date.now().toString();
-        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', id), { 
-            id, date: document.getElementById('event-date').value, 
-            student: document.getElementById('event-student').value, 
-            start: document.getElementById('event-start').value, 
-            end: document.getElementById('event-end').value, 
-            type: document.querySelector('input[name="event-type"]:checked').value, 
-            guitar: document.querySelector('input[name="guitar-type"]:checked').value 
-        });
-        eventModal.classList.add('hidden');
+        try {
+            const id = document.getElementById('event-id').value || Date.now().toString();
+            await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', id), { 
+                id, date: document.getElementById('event-date').value, 
+                student: document.getElementById('event-student').value, 
+                start: document.getElementById('event-start').value, 
+                end: document.getElementById('event-end').value, 
+                type: document.querySelector('input[name="event-type"]:checked').value, 
+                guitar: document.querySelector('input[name="guitar-type"]:checked').value 
+            });
+            eventModal.classList.add('hidden');
+        } catch (e) { console.error("Save Event Error:", e); }
     };
     
     document.getElementById('event-delete').onclick = async () => { 
