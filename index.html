@@ -97,7 +97,6 @@
 <body class="min-h-screen pb-10">
 
 <div id="app" class="max-w-6xl mx-auto px-2 sm:px-4 pt-4">
-    <!-- Header -->
     <header class="flex flex-col md:flex-row justify-between items-center mb-4 bg-amber-800 p-3 sm:p-4 rounded-xl shadow-lg text-white border-b-4 border-amber-900">
         <h1 class="text-xl sm:text-2xl font-bold flex items-center gap-2">
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
@@ -114,10 +113,8 @@
         </div>
     </header>
 
-    <!-- Main Content -->
     <div class="grid grid-cols-1 lg:grid-cols-4 gap-4">
         <div id="calendar-container" class="lg:col-span-4 bg-white rounded-xl shadow-xl overflow-hidden border border-amber-200">
-            <!-- Calendar Controls -->
             <div class="grid grid-cols-3 items-center p-2 sm:p-4 bg-amber-50 border-b border-amber-100">
                 <div class="flex justify-start"></div>
                 <div class="flex items-center justify-center gap-2 sm:gap-6">
@@ -147,11 +144,9 @@
                 <div class="py-2">金</div>
                 <div class="py-2 text-blue-600">土</div>
             </div>
-
             <div id="calendar-days" class="calendar-grid"></div>
         </div>
 
-        <!-- Sidebar -->
         <div id="sidebar" class="hidden lg:col-span-1 space-y-4">
             <div id="admin-student-list" class="bg-white rounded-xl shadow-xl p-4 border border-amber-200">
                 <h3 class="text-lg font-bold text-amber-900 mb-4 border-b-2 border-amber-100 pb-2">生徒名簿</h3>
@@ -167,7 +162,6 @@
                         </div>
                         <button id="add-student-btn" class="w-full bg-amber-500 text-white py-1.5 rounded text-xs font-bold hover:bg-amber-600">追加</button>
                     </div>
-                    <p class="text-[10px] text-gray-500">※ドラッグして予約を作成</p>
                     <div id="students-container" class="space-y-2 max-h-60 overflow-y-auto pr-1"></div>
                 </div>
             </div>
@@ -179,6 +173,7 @@
         <div class="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm border-4 border-amber-600">
             <h3 class="text-xl font-bold text-center text-amber-900 mb-4">パスワード入力</h3>
             <input type="password" id="admin-password" maxlength="4" placeholder="4桁の数字" class="w-full text-center text-2xl tracking-widest border-2 border-amber-200 rounded-lg p-2 mb-4 focus:outline-none focus:border-amber-500">
+            <div id="pw-error" class="hidden text-red-500 text-xs text-center mb-4">パスワードが正しくありません</div>
             <div class="flex gap-2">
                 <button id="pw-cancel" class="flex-1 py-2 bg-gray-200 rounded-lg font-bold hover:bg-gray-300">キャンセル</button>
                 <button id="pw-submit" class="flex-1 py-2 bg-amber-600 text-white rounded-lg font-bold hover:bg-amber-700 transition-shadow">ログイン</button>
@@ -241,30 +236,31 @@
             </div>
         </div>
     </div>
-
 </div>
 
-<!-- Firebase SDK -->
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
     import { getFirestore, doc, setDoc, deleteDoc, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-    // Firebase Config
-    const firebaseConfig = {
-      apiKey: "AIzaSyC3sKAuUBw-WGTlcGoYZEZj8VnKT5cszao",
-      authDomain: "sgcalendar-6df3a.firebaseapp.com",
-      projectId: "sgcalendar-6df3a",
-      storageBucket: "sgcalendar-6df3a.firebasestorage.app",
-      messagingSenderId: "267509556769",
-      appId: "1:267509556769:web:d47ac092a554b72f0c2560",
-      measurementId: "G-YQF6YM0MJT"
+    // ---------------------------------------------------------
+    // 【最重要】Firebase設定：必ずご自身の情報を入力してください
+    // ---------------------------------------------------------
+    let firebaseConfig = {
+        apiKey: "",
+        authDomain: "",
+        projectId: "",
+        storageBucket: "",
+        messagingSenderId: "",
+        appId: ""
     };
 
-    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-    const app = initializeApp(firebaseConfig);
-    const auth = getAuth(app);
-    const db = getFirestore(app);
+    // 環境からの自動読み込み（GitHub Pages等で使う設定）
+    try {
+        if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+            firebaseConfig = JSON.parse(__firebase_config);
+        }
+    } catch(e) {}
 
     // State
     let isAdmin = false;
@@ -272,6 +268,7 @@
     let events = [];
     let students = [];
     let user = null;
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'my-guitar-app-v1';
 
     // DOM Elements
     const calendarDays = document.getElementById('calendar-days');
@@ -287,6 +284,7 @@
     const adminPasswordInput = document.getElementById('admin-password');
     const pwSubmitBtn = document.getElementById('pw-submit');
     const pwCancelBtn = document.getElementById('pw-cancel');
+    const pwErrorMsg = document.getElementById('pw-error');
     const eventModal = document.getElementById('event-modal');
     const eventForm = document.getElementById('event-form');
     const dragChoiceModal = document.getElementById('drag-choice-modal');
@@ -295,88 +293,22 @@
     let draggedStudentObj = null; 
     let dropTargetDate = null;
 
-    // Holidays
     const HOLIDAYS = {
         '2025-01-01': '元日', '2025-01-13': '成人の日', '2025-02-11': '建国記念の日', '2025-02-23': '天皇誕生日',
         '2025-02-24': '振替休日', '2025-03-20': '春分の日', '2025-04-29': '昭和の日', '2025-05-03': '憲法記念日',
-        '2025-05-04': 'みどりの日', '2025-05-05': 'こどもの日', '2025-05-06': '振替休日', '2025-07-21': '海の日', '2025-08-11': '山の日',
-        '2025-09-15': '敬老の日', '2025-09-22': '国民の休日', '2025-09-23': '秋分の日', '2025-10-13': 'スポーツの日', '2025-11-03': '文化の日',
-        '2025-11-23': '勤労感謝の日', '2025-11-24': '振替休日'
+        '2025-05-04': 'みどりの日', '2025-05-05': 'こどもの日', '2025-05-06': '振替休日', '2025-07-21': '海の日', 
+        '2025-08-11': '山の日', '2025-09-15': '敬老の日', '2025-09-23': '秋分の日', '2025-10-13': 'スポーツの日', 
+        '2025-11-03': '文化の日', '2025-11-23': '勤労感謝の日', '2025-11-24': '振替休日',
+        '2026-01-01': '元日', '2026-01-12': '成人の日', '2026-02-11': '建国記念の日', '2026-02-23': '天皇誕生日',
+        '2026-02-24': '振替休日', '2026-03-20': '春分の日', '2026-04-29': '昭和の日', '2026-05-03': '憲法記念日',
+        '2026-05-04': 'みどりの日', '2026-05-05': 'こどもの日', '2026-05-06': '振替休日', '2026-07-20': '海の日', 
+        '2026-08-11': '山の日', '2026-09-21': '敬老の日', '2026-09-22': '国民の休日', '2026-09-23': '秋分の日', 
+        '2026-10-12': 'スポーツの日', '2026-11-03': '文化の日', '2026-11-23': '勤労感謝の日', '2026-11-24': '振替休日'
     };
 
-    // Firebase Operations
-    const eventsCollection = collection(db, 'artifacts', appId, 'public', 'data', 'events');
-    const studentsCollection = collection(db, 'artifacts', appId, 'public', 'data', 'students');
-
-    const saveEventToFirebase = async (eventData) => {
-        if (!user) return;
-        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', eventData.id), eventData);
-    };
-
-    const deleteEventFromFirebase = async (id) => {
-        if (!user) return;
-        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', id));
-    };
-
-    const saveStudentToFirebase = async (studentData) => {
-        if (!user) return;
-        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'students', studentData.id), studentData);
-    };
-
-    const deleteStudentFromFirebase = async (id) => {
-        if (!user) return;
-        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'students', id));
-    };
-
-    // Utils
     const formatYMD = (date) => {
         const d = new Date(date);
         return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    };
-
-    const generateTimeOptions = () => {
-        const startSelect = document.getElementById('event-start');
-        const endSelect = document.getElementById('event-end');
-        const regTimeSelect = document.getElementById('new-student-time');
-        startSelect.innerHTML = '';
-        endSelect.innerHTML = '';
-        regTimeSelect.innerHTML = '';
-        for(let h=8; h<=23; h++) {
-            for(let m of ['00', '30']) {
-                const time = `${String(h).padStart(2, '0')}:${m}`;
-                const opt = document.createElement('option');
-                opt.value = time;
-                opt.textContent = time;
-                startSelect.appendChild(opt);
-                endSelect.appendChild(opt.cloneNode(true));
-                regTimeSelect.appendChild(opt.cloneNode(true));
-            }
-        }
-    };
-
-    const updateEndTime = () => {
-        const eventType = document.querySelector('input[name="event-type"]:checked').value;
-        const start = document.getElementById('event-start').value;
-        const endSelect = document.getElementById('event-end');
-
-        if (eventType === 'individual') {
-            const [h, m] = start.split(':').map(Number);
-            let endH = h + 1;
-            let endM = m;
-            const calculatedEnd = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
-            endSelect.value = calculatedEnd;
-            endSelect.disabled = true;
-            endSelect.classList.add('bg-gray-50', 'text-gray-500');
-        } else {
-            endSelect.disabled = false;
-            endSelect.classList.remove('bg-gray-50', 'text-gray-500');
-        }
-    };
-
-    const toggleGuitarTypeVisibility = () => {
-        const type = document.querySelector('input[name="event-type"]:checked').value;
-        document.getElementById('guitar-type-section').style.display = (type === 'individual') ? 'block' : 'none';
-        updateEndTime();
     };
 
     const renderCalendar = () => {
@@ -469,14 +401,45 @@
             const delBtn = document.createElement('button');
             delBtn.className = 'text-red-300 hover:text-red-500';
             delBtn.innerHTML = '×';
-            delBtn.onclick = async (e) => { 
-                e.stopPropagation(); 
-                await deleteStudentFromFirebase(s.id); 
-            };
+            delBtn.onclick = async (e) => { e.stopPropagation(); if(db && user) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'students', s.id)); };
             header.appendChild(delBtn);
             div.appendChild(header);
             studentsContainer.appendChild(div);
         });
+    };
+
+    const generateTimeOptions = () => {
+        const selects = ['event-start', 'event-end', 'new-student-time'];
+        selects.forEach(id => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.innerHTML = '';
+            for(let h=8; h<=23; h++) {
+                for(let m of ['00', '30']) {
+                    const time = `${String(h).padStart(2, '0')}:${m}`;
+                    const opt = document.createElement('option');
+                    opt.value = time; opt.textContent = time;
+                    el.appendChild(opt);
+                }
+            }
+        });
+    };
+
+    const updateEndTime = () => {
+        const typeSelect = document.querySelector('input[name="event-type"]:checked');
+        if(!typeSelect) return;
+        const type = typeSelect.value;
+        const start = document.getElementById('event-start').value;
+        const endSelect = document.getElementById('event-end');
+        if (type === 'individual') {
+            const [h, m] = start.split(':').map(Number);
+            endSelect.value = `${String(h + 1).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+            endSelect.disabled = true;
+            endSelect.classList.add('bg-gray-50', 'text-gray-500');
+        } else {
+            endSelect.disabled = false;
+            endSelect.classList.remove('bg-gray-50', 'text-gray-500');
+        }
     };
 
     const openEventModal = (date, event = null) => {
@@ -485,7 +448,6 @@
         document.getElementById('event-date').value = date;
         document.getElementById('event-student').value = event ? event.student : '';
         document.getElementById('event-start').value = event ? event.start : '10:00';
-        
         if (event) {
             document.querySelector(`input[name="event-type"][value="${event.type}"]`).checked = true;
             document.querySelector(`input[name="guitar-type"][value="${event.guitar}"]`).checked = true;
@@ -497,61 +459,89 @@
             document.getElementById('event-delete').classList.add('hidden');
         }
         updateEndTime();
-        toggleGuitarTypeVisibility();
+        const checkedType = document.querySelector('input[name="event-type"]:checked');
+        document.getElementById('guitar-type-section').style.display = (checkedType && checkedType.value === 'individual') ? 'block' : 'none';
         eventModal.classList.remove('hidden');
     };
 
     const handleCellDrop = async (date) => {
+        if (!user || !db) return;
         if (draggedStudentObj) {
             const [h, m] = draggedStudentObj.time.split(':').map(Number);
-            const newEvent = { 
-                id: Date.now().toString(), 
-                date, 
-                student: draggedStudentObj.name, 
-                start: draggedStudentObj.time, 
-                end: `${String(h + 1).padStart(2, '0')}:${String(m).padStart(2, '0')}`, 
-                type: 'individual', 
-                guitar: draggedStudentObj.guitar 
-            };
-            await saveEventToFirebase(newEvent);
+            const id = Date.now().toString();
+            await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', id), { id, date, student: draggedStudentObj.name, start: draggedStudentObj.time, end: `${String(h + 1).padStart(2, '0')}:${String(m).padStart(2, '0')}`, type: 'individual', guitar: draggedStudentObj.guitar });
             draggedStudentObj = null;
         } else if (draggedEventId) {
-            dropTargetDate = date; 
-            dragChoiceModal.classList.remove('hidden');
+            dropTargetDate = date; dragChoiceModal.classList.remove('hidden');
         }
     };
 
-    const handleDragAction = async (action) => {
-        const index = events.findIndex(e => e.id === draggedEventId);
-        if (index === -1) return;
-        const targetEvent = events[index];
-        if (action === 'move') {
-            await saveEventToFirebase({ ...targetEvent, date: dropTargetDate });
-        } else if (action === 'copy') {
-            await saveEventToFirebase({ ...targetEvent, id: Date.now().toString(), date: dropTargetDate });
+    // Firebase Initialization
+    let db, authInstance;
+    const initApp = async () => {
+        renderCalendar(); 
+        
+        if (!firebaseConfig.apiKey) {
+            currentMonthDisplay.textContent += " (設定待ち)";
+            return;
         }
-        draggedEventId = null; 
-        dragChoiceModal.classList.add('hidden');
+
+        try {
+            const app = initializeApp(firebaseConfig);
+            authInstance = getAuth(app);
+            db = getFirestore(app);
+
+            const performSignIn = async () => {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(authInstance, __initial_auth_token);
+                } else {
+                    await signInAnonymously(authInstance);
+                }
+            };
+            await performSignIn();
+
+            onAuthStateChanged(authInstance, (u) => {
+                user = u;
+                if (!user) return; 
+
+                const eventsRef = collection(db, 'artifacts', appId, 'public', 'data', 'events');
+                const studentsRef = collection(db, 'artifacts', appId, 'public', 'data', 'students');
+
+                onSnapshot(eventsRef, (snap) => {
+                    events = snap.docs.map(d => d.data());
+                    renderCalendar();
+                }, (error) => {
+                    console.error("Firestore Listen Error (Events):", error);
+                });
+
+                onSnapshot(studentsRef, (snap) => {
+                    students = snap.docs.map(d => d.data());
+                    if (isAdmin) renderStudents();
+                }, (error) => {
+                    console.error("Firestore Listen Error (Students):", error);
+                });
+            });
+        } catch(e) {
+            console.error("Firebase Init Error:", e);
+        }
     };
 
-    // Events
+    // Event Listeners
     prevMonthBtn.onclick = () => { currentDate.setMonth(currentDate.getMonth() - 1); renderCalendar(); };
     nextMonthBtn.onclick = () => { currentDate.setMonth(currentDate.getMonth() + 1); renderCalendar(); };
-    
-    adminToggleBtn.onclick = () => {
+    adminToggleBtn.onclick = () => { 
         if (isAdmin) { 
-            isAdmin = false; 
-            adminToggleBtn.textContent = '先生ログイン'; 
+            isAdmin = false; adminToggleBtn.textContent = '先生ログイン'; 
             document.getElementById('admin-actions').classList.add('hidden'); 
             renderCalendar(); 
         } else { 
             passwordModal.classList.remove('hidden'); 
             adminPasswordInput.focus(); 
-        }
+            pwErrorMsg.classList.add('hidden');
+        } 
     };
-
     pwCancelBtn.onclick = () => { passwordModal.classList.add('hidden'); adminPasswordInput.value = ''; };
-    pwSubmitBtn.onclick = () => {
+    pwSubmitBtn.onclick = () => { 
         if (adminPasswordInput.value === '0927') { 
             isAdmin = true; 
             adminToggleBtn.textContent = 'ログアウト'; 
@@ -561,56 +551,83 @@
             renderCalendar(); 
             renderStudents(); 
         } else {
-            alert('パスワードが違います');
+            pwErrorMsg.classList.remove('hidden');
         }
     };
-
     studentSearch.oninput = () => renderCalendar();
     
     document.getElementById('add-student-btn').onclick = async () => {
         const nameInput = document.getElementById('new-student-name');
         const name = nameInput.value;
-        if (name.trim()) { 
-            const newStudent = { 
-                id: Date.now().toString(), 
+        
+        if (!name.trim()) return;
+        
+        if (!db || !user) {
+            console.error("Firebaseへの接続が完了していません。少し待ってから再度お試しください。");
+            return;
+        }
+
+        try {
+            const id = Date.now().toString();
+            const studentData = { 
+                id, 
                 name: name.trim(), 
                 time: document.getElementById('new-student-time').value, 
                 guitar: document.getElementById('new-student-guitar').value 
             };
-            await saveStudentToFirebase(newStudent);
-            nameInput.value = ''; 
+            
+            await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'students', id), studentData);
+            nameInput.value = '';
+        } catch (error) {
+            console.error("名簿登録エラー:", error);
+            if (error.code === 'permission-denied') {
+                console.error("Firestoreのセキュリティルールを確認してください。");
+            }
         }
     };
-
+    
     document.getElementById('event-close').onclick = () => eventModal.classList.add('hidden');
     document.getElementById('event-start').onchange = updateEndTime;
-    document.querySelectorAll('input[name="event-type"]').forEach(r => r.onchange = toggleGuitarTypeVisibility);
+    document.querySelectorAll('input[name="event-type"]').forEach(r => r.onchange = () => { 
+        updateEndTime(); 
+        document.getElementById('guitar-type-section').style.display = (r.value === 'individual') ? 'block' : 'none'; 
+    });
     
     eventForm.onsubmit = async (e) => {
-        e.preventDefault();
-        const id = document.getElementById('event-id').value;
-        const data = { 
-            id: id || Date.now().toString(), 
-            date: document.getElementById('event-date').value, 
+        e.preventDefault(); if (!user || !db) return;
+        const id = document.getElementById('event-id').value || Date.now().toString();
+        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', id), { 
+            id, date: document.getElementById('event-date').value, 
             student: document.getElementById('event-student').value, 
             start: document.getElementById('event-start').value, 
             end: document.getElementById('event-end').value, 
             type: document.querySelector('input[name="event-type"]:checked').value, 
             guitar: document.querySelector('input[name="guitar-type"]:checked').value 
-        };
-        await saveEventToFirebase(data);
+        });
         eventModal.classList.add('hidden');
     };
-
+    
     document.getElementById('event-delete').onclick = async () => { 
-        const id = document.getElementById('event-id').value;
-        await deleteEventFromFirebase(id);
+        if(user && db) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', document.getElementById('event-id').value)); 
         eventModal.classList.add('hidden'); 
     };
-
-    document.getElementById('drag-move').onclick = () => handleDragAction('move');
-    document.getElementById('drag-copy').onclick = () => handleDragAction('copy');
-    document.getElementById('drag-cancel').onclick = () => { dragChoiceModal.classList.add('hidden'); draggedEventId = null; };
+    
+    document.getElementById('drag-move').onclick = async () => { 
+        const ev = events.find(e => e.id === draggedEventId); 
+        if(ev && user && db) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', ev.id), { ...ev, date: dropTargetDate }); 
+        dragChoiceModal.classList.add('hidden'); 
+    };
+    
+    document.getElementById('drag-copy').onclick = async () => { 
+        const ev = events.find(e => e.id === draggedEventId); 
+        if(ev && user && db) { 
+            const id = Date.now().toString(); 
+            await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', id), { ...ev, id, date: dropTargetDate }); 
+        } 
+        dragChoiceModal.classList.add('hidden'); 
+    };
+    
+    document.getElementById('drag-cancel').onclick = () => { dragChoiceModal.classList.add('hidden'); };
 
     document.getElementById('export-btn').onclick = () => {
         let csv = "Subject,Start Date,Start Time,End Date,End Time,Description\n";
@@ -621,35 +638,6 @@
         link.href = URL.createObjectURL(new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csv], { type: 'text/csv;charset=utf-8;' }));
         link.download = `lessons_${currentDate.getFullYear()}_${currentDate.getMonth()+1}.csv`;
         link.click();
-    };
-
-    // Firebase Auth Init
-    const initApp = async () => {
-        const initAuth = async () => {
-            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                await signInWithCustomToken(auth, __initial_auth_token);
-            } else {
-                await signInAnonymously(auth);
-            }
-        };
-        await initAuth();
-
-        onAuthStateChanged(auth, (u) => {
-            user = u;
-            if (user) {
-                // Subscribe to Firestore Events
-                onSnapshot(eventsCollection, (snapshot) => {
-                    events = snapshot.docs.map(doc => doc.data());
-                    renderCalendar();
-                }, (err) => console.error("Firestore Error (Events):", err));
-
-                // Subscribe to Firestore Students
-                onSnapshot(studentsCollection, (snapshot) => {
-                    students = snapshot.docs.map(doc => doc.data());
-                    if (isAdmin) renderStudents();
-                }, (err) => console.error("Firestore Error (Students):", err));
-            }
-        });
     };
 
     generateTimeOptions();
