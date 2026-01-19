@@ -233,7 +233,7 @@
 <!-- Firebase SDK -->
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-    import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+    import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
     // 状態管理
@@ -245,23 +245,60 @@
     let db, auth;
     let appId = 'lesson-calendar-app';
 
-    // 日本の祝日データ（2025年〜2026年）
+    // 祝日データ
     const HOLIDAYS = {
-        // 2025年
         '2025-01-01': '元日', '2025-01-13': '成人の日', '2025-02-11': '建国記念の日', '2025-02-23': '天皇誕生日',
         '2025-02-24': '振替休日', '2025-03-20': '春分の日', '2025-04-29': '昭和の日', '2025-05-03': '憲法記念日',
         '2025-05-04': 'みどりの日', '2025-05-05': 'こどもの日', '2025-05-06': '振替休日', '2025-07-21': '海の日', '2025-08-11': '山の日',
         '2025-08-12': '振替休日', '2025-09-15': '敬老の日', '2025-09-23': '秋分の日', '2025-10-13': 'スポーツの日', '2025-11-03': '文化の日',
-        '2025-11-23': '勤労感謝の日', '2025-11-24': '振替休日',
-        // 2026年
-        '2026-01-01': '元日', '2026-01-12': '成人の日', '2026-02-11': '建国記念の日', '2026-02-23': '天皇誕生日',
-        '2026-03-20': '春分の日', '2026-04-29': '昭和の日', '2026-05-03': '憲法記念日', '2026-05-04': 'みどりの日',
-        '2026-05-05': 'こどもの日', '2026-05-06': '振替休日', '2026-07-20': '海の日', '2026-08-11': '山の日',
-        '2026-09-21': '敬老の日', '2026-09-22': '国民の休日', '2026-09-23': '秋分の日', '2026-10-12': 'スポーツの日',
-        '2026-11-03': '文化の日', '2026-11-23': '勤労感謝の日', '2026-11-24': '振替休日'
+        '2025-11-23': '勤労感謝の日', '2025-11-24': '振替休日'
     };
 
-    // DOM要素
+    // 共通関数
+    const formatYMD = (date) => {
+        const d = new Date(date);
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+
+    const getCollectionPath = (name) => ['artifacts', appId, 'public', 'data', name];
+
+    // Firestore書き込み（エラー処理を強化）
+    const dbSaveEvent = async (eventData) => {
+        if (!db || !user) {
+            console.error("Database or User not initialized");
+            return false;
+        }
+        try {
+            await setDoc(doc(db, ...getCollectionPath('events'), eventData.id), eventData);
+            return true;
+        } catch (e) {
+            console.error("Save Event Error:", e);
+            return false;
+        }
+    };
+
+    const dbDeleteEvent = async (id) => {
+        if (!db || !user) return;
+        try {
+            await deleteDoc(doc(db, ...getCollectionPath('events'), id));
+        } catch (e) { console.error("Delete Error:", e); }
+    };
+
+    const dbSaveStudent = async (studentData) => {
+        if (!db || !user) return;
+        try {
+            await setDoc(doc(db, ...getCollectionPath('students'), studentData.id), studentData);
+        } catch (e) { console.error("Save Student Error:", e); }
+    };
+
+    const dbDeleteStudent = async (id) => {
+        if (!db || !user) return;
+        try {
+            await deleteDoc(doc(db, ...getCollectionPath('students'), id));
+        } catch (e) { console.error("Delete Student Error:", e); }
+    };
+
+    // DOM要素（即座に取得できるよう関数の外でも定義）
     const calendarDays = document.getElementById('calendar-days');
     const calendarContainer = document.getElementById('calendar-container');
     const sidebar = document.getElementById('sidebar');
@@ -283,51 +320,23 @@
     let draggedStudentObj = null;
     let dropTargetDate = null;
 
-    // 共通関数
-    const formatYMD = (date) => {
-        const d = new Date(date);
-        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    };
-
-    const getCollectionPath = (name) => ['artifacts', appId, 'public', 'data', name];
-
-    // Firestore書き込み
-    const dbSaveEvent = async (eventData) => {
-        if (!user) return;
-        await setDoc(doc(db, ...getCollectionPath('events'), eventData.id), eventData);
-    };
-
-    const dbDeleteEvent = async (id) => {
-        if (!user) return;
-        await deleteDoc(doc(db, ...getCollectionPath('events'), id));
-    };
-
-    const dbSaveStudent = async (studentData) => {
-        if (!user) return;
-        await setDoc(doc(db, ...getCollectionPath('students'), studentData.id), studentData);
-    };
-
-    const dbDeleteStudent = async (id) => {
-        if (!user) return;
-        await deleteDoc(doc(db, ...getCollectionPath('students'), id));
-    };
-
     // UI描画
     const renderCalendar = () => {
         const year = currentDate.getFullYear();
         const month = currentDate.getMonth();
-        currentMonthDisplay.textContent = `${year}年 ${month + 1}月`;
+        if (currentMonthDisplay) currentMonthDisplay.textContent = `${year}年 ${month + 1}月`;
+        
         const firstDay = new Date(year, month, 1).getDay();
         const lastDate = new Date(year, month + 1, 0).getDate();
-        calendarDays.innerHTML = '';
+        if (calendarDays) calendarDays.innerHTML = '';
         const searchTerm = (studentSearch?.value || '').trim().toLowerCase();
 
         if (isAdmin) {
-            calendarContainer.classList.replace('lg:col-span-4', 'lg:col-span-3');
-            sidebar.classList.remove('hidden');
+            calendarContainer?.classList.replace('lg:col-span-4', 'lg:col-span-3');
+            sidebar?.classList.remove('hidden');
         } else {
-            calendarContainer.classList.replace('lg:col-span-3', 'lg:col-span-4');
-            sidebar.classList.add('hidden');
+            calendarContainer?.classList.replace('lg:col-span-3', 'lg:col-span-4');
+            sidebar?.classList.add('hidden');
         }
 
         const totalCells = Math.ceil((firstDay + lastDate) / 7) * 7;
@@ -365,10 +374,11 @@
 
             const eventContainer = document.createElement('div');
             eventContainer.className = 'event-container flex-1 overflow-y-auto px-0.5 space-y-0.5';
-            const cellEvents = events.filter(ev => ev.date === ymd).sort((a, b) => a.start.localeCompare(b.start));
+            const cellEvents = events.filter(ev => ev.date === ymd).sort((a, b) => (a.start || "").localeCompare(b.start || ""));
             cellEvents.forEach(ev => {
                 const isShared = ev.type === 'shared';
-                let shouldShow = isAdmin ? (!searchTerm || ev.student.toLowerCase().includes(searchTerm) || isShared) : (isShared || (searchTerm && ev.student.toLowerCase().includes(searchTerm)));
+                const studentName = (ev.student || "").toLowerCase();
+                let shouldShow = isAdmin ? (!searchTerm || studentName.includes(searchTerm) || isShared) : (isShared || (searchTerm && studentName.includes(searchTerm)));
                 if (shouldShow) {
                     const evEl = document.createElement('div');
                     evEl.className = `event-card ${isShared ? 'event-shared' : (ev.guitar === 'electric' ? 'event-electric' : 'event-acoustic')}`;
@@ -382,7 +392,7 @@
                 }
             });
             cell.appendChild(eventContainer);
-            calendarDays.appendChild(cell);
+            calendarDays?.appendChild(cell);
         }
     };
 
@@ -415,6 +425,7 @@
         const startSelect = document.getElementById('event-start');
         const endSelect = document.getElementById('event-end');
         const regTimeSelect = document.getElementById('new-student-time');
+        if (!startSelect || !endSelect || !regTimeSelect) return;
         for(let h=8; h<=23; h++) {
             for(let m of ['00', '30']) {
                 const time = `${String(h).padStart(2, '0')}:${m}`;
@@ -429,9 +440,13 @@
     };
 
     const updateEndTime = () => {
-        const eventType = document.querySelector('input[name="event-type"]:checked').value;
-        const start = document.getElementById('event-start').value;
+        const radioChecked = document.querySelector('input[name="event-type"]:checked');
+        if (!radioChecked) return;
+        const eventType = radioChecked.value;
+        const start = document.getElementById('event-start')?.value || "10:00";
         const endSelect = document.getElementById('event-end');
+        if (!endSelect) return;
+
         if (eventType === 'individual') {
             const [h, m] = start.split(':').map(Number);
             const calculatedEnd = `${String(h + 1).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
@@ -445,8 +460,9 @@
     };
 
     const toggleGuitarTypeVisibility = () => {
-        const type = document.querySelector('input[name="event-type"]:checked').value;
-        document.getElementById('guitar-type-section').style.display = (type === 'individual') ? 'block' : 'none';
+        const type = document.querySelector('input[name="event-type"]:checked')?.value;
+        const section = document.getElementById('guitar-type-section');
+        if (section) section.style.display = (type === 'individual') ? 'block' : 'none';
         updateEndTime();
     };
 
@@ -459,18 +475,22 @@
         document.getElementById('event-start').value = event ? event.start : '10:00';
         
         if (event) {
-            document.querySelector(`input[name="event-type"][value="${event.type}"]`).checked = true;
-            document.querySelector(`input[name="guitar-type"][value="${event.guitar}"]`).checked = true;
+            const typeInput = document.querySelector(`input[name="event-type"][value="${event.type}"]`);
+            if (typeInput) typeInput.checked = true;
+            const guitarInput = document.querySelector(`input[name="guitar-type"][value="${event.guitar}"]`);
+            if (guitarInput) guitarInput.checked = true;
             document.getElementById('event-end').value = event.end;
             document.getElementById('event-delete').classList.remove('hidden');
         } else {
-            document.querySelector('input[name="event-type"][value="individual"]').checked = true;
-            document.querySelector('input[name="guitar-type"][value="acoustic"]').checked = true;
+            const typeInput = document.querySelector('input[name="event-type"][value="individual"]');
+            if (typeInput) typeInput.checked = true;
+            const guitarInput = document.querySelector('input[name="guitar-type"][value="acoustic"]');
+            if (guitarInput) guitarInput.checked = true;
             document.getElementById('event-delete').classList.add('hidden');
         }
         updateEndTime();
         toggleGuitarTypeVisibility();
-        eventModal.classList.remove('hidden');
+        eventModal?.classList.remove('hidden');
     };
 
     const handleCellDrop = (date) => {
@@ -488,7 +508,7 @@
             draggedStudentObj = null;
         } else if (draggedEventId) {
             dropTargetDate = date; 
-            dragChoiceModal.classList.remove('hidden');
+            dragChoiceModal?.classList.remove('hidden');
         }
     };
 
@@ -501,17 +521,17 @@
             await dbSaveEvent({ ...event, id: Date.now().toString(), date: dropTargetDate });
         }
         draggedEventId = null; 
-        dragChoiceModal.classList.add('hidden');
+        dragChoiceModal?.classList.add('hidden');
     };
 
-    // リスナー
+    // リスナー登録
     prevMonthBtn.onclick = () => { currentDate.setMonth(currentDate.getMonth() - 1); renderCalendar(); };
     nextMonthBtn.onclick = () => { currentDate.setMonth(currentDate.getMonth() + 1); renderCalendar(); };
     adminToggleBtn.onclick = () => {
         if (isAdmin) { isAdmin = false; adminToggleBtn.textContent = '先生ログイン'; document.getElementById('admin-actions').classList.add('hidden'); renderCalendar(); }
-        else { passwordModal.classList.remove('hidden'); adminPasswordInput.focus(); }
+        else { passwordModal?.classList.remove('hidden'); adminPasswordInput?.focus(); }
     };
-    pwCancelBtn.onclick = () => { passwordModal.classList.add('hidden'); adminPasswordInput.value = ''; };
+    pwCancelBtn.onclick = () => { passwordModal?.classList.add('hidden'); adminPasswordInput.value = ''; };
     pwSubmitBtn.onclick = () => {
         if (adminPasswordInput.value === '0927') { isAdmin = true; adminToggleBtn.textContent = 'ログアウト'; document.getElementById('admin-actions').classList.remove('hidden'); passwordModal.classList.add('hidden'); adminPasswordInput.value = ''; renderCalendar(); renderStudents(); }
         else alert('パスワードが違います');
@@ -529,12 +549,16 @@
             document.getElementById('new-student-name').value = '';
         }
     };
-    document.getElementById('event-close').onclick = () => eventModal.classList.add('hidden');
+    document.getElementById('event-close').onclick = () => eventModal?.classList.add('hidden');
     document.getElementById('event-start').onchange = updateEndTime;
     document.querySelectorAll('input[name="event-type"]').forEach(r => r.onchange = toggleGuitarTypeVisibility);
     
     eventForm.onsubmit = async (e) => {
         e.preventDefault();
+        const saveBtn = document.getElementById('event-save');
+        saveBtn.disabled = true;
+        saveBtn.textContent = "保存中...";
+
         const id = document.getElementById('event-id').value || Date.now().toString();
         const data = { 
             id, 
@@ -545,13 +569,21 @@
             type: document.querySelector('input[name="event-type"]:checked').value, 
             guitar: document.querySelector('input[name="guitar-type"]:checked').value 
         };
-        await dbSaveEvent(data);
-        eventModal.classList.add('hidden');
+        
+        const success = await dbSaveEvent(data);
+        saveBtn.disabled = false;
+        saveBtn.textContent = "保存する";
+        
+        if (success) {
+            eventModal?.classList.add('hidden');
+        } else {
+            alert("保存に失敗しました。接続を確認してください。");
+        }
     };
-    document.getElementById('event-delete').onclick = () => { dbDeleteEvent(document.getElementById('event-id').value); eventModal.classList.add('hidden'); };
+    document.getElementById('event-delete').onclick = () => { dbDeleteEvent(document.getElementById('event-id').value); eventModal?.classList.add('hidden'); };
     document.getElementById('drag-move').onclick = () => handleDragAction('move');
     document.getElementById('drag-copy').onclick = () => handleDragAction('copy');
-    document.getElementById('drag-cancel').onclick = () => { dragChoiceModal.classList.add('hidden'); draggedEventId = null; };
+    document.getElementById('drag-cancel').onclick = () => { dragChoiceModal?.classList.add('hidden'); draggedEventId = null; };
     document.getElementById('export-btn').onclick = () => {
         let csv = "Subject,Start Date,Start Time,End Date,End Time,Description\n";
         events.filter(e => new Date(e.date).getMonth() === currentDate.getMonth()).forEach(e => csv += `"${e.student}","${e.date.replace(/-/g, '/')}","${e.start}","${e.date.replace(/-/g, '/')}","${e.end}",""\n`);
@@ -561,21 +593,29 @@
         link.click();
     };
 
-    // Firebase同期
+    // Firebase初期化と同期
     const initApp = async () => {
         try {
             generateTimeOptions();
-            // 先にカレンダーを一度描画（読み込み中で止まるのを防ぐ）
             renderCalendar();
 
-            if (typeof __firebase_config === 'undefined') return;
-            const firebaseConfig = JSON.parse(__firebase_config);
+            // 設定のパース処理を安全に
+            let firebaseConfig;
+            try {
+                firebaseConfig = typeof __firebase_config === 'string' ? JSON.parse(__firebase_config) : __firebase_config;
+            } catch (e) {
+                console.error("Firebase Config Error", e);
+                return;
+            }
+            
+            if (!firebaseConfig) return;
+            
             const app = initializeApp(firebaseConfig);
             db = getFirestore(app);
             auth = getAuth(app);
             appId = typeof __app_id !== 'undefined' ? __app_id : 'lesson-calendar-app';
 
-            // 認証の開始
+            // 認証
             if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                 await signInWithCustomToken(auth, __initial_auth_token).catch(() => signInAnonymously(auth));
             } else {
@@ -586,23 +626,24 @@
                 user = u;
                 if (!user) return;
 
-                // データのリアルタイム同期
+                // イベント同期
                 onSnapshot(collection(db, ...getCollectionPath('events')), (snapshot) => {
                     events = snapshot.docs.map(d => d.data());
-                    renderCalendar(); // データが来たら再描画
+                    renderCalendar();
                 }, (err) => {
                     console.error("Event Sync Error", err);
-                    renderCalendar(); // エラー時も読み込み中を解除するため描画
+                    renderCalendar();
                 });
 
+                // 生徒同期
                 onSnapshot(collection(db, ...getCollectionPath('students')), (snapshot) => {
                     students = snapshot.docs.map(d => d.data());
                     if (isAdmin) renderStudents();
                 });
             });
         } catch (e) {
-            console.error("Initialization Error", e);
-            renderCalendar(); // 最悪の場合も描画だけは通す
+            console.error("Init Error", e);
+            renderCalendar();
         }
     };
 
