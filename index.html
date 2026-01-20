@@ -32,15 +32,51 @@
         }
 
         .lesson-item {
-            cursor: grab;
-            font-size: 11px;
-            line-height: 1.2;
+            cursor: pointer;
+            font-size: 9px;
+            line-height: 1.1;
             word-break: break-all;
             white-space: normal;
         }
 
-        .lesson-item:active {
-            cursor: grabbing;
+        @media (min-width: 768px) {
+            .lesson-item {
+                font-size: 11px;
+                line-height: 1.2;
+                cursor: grab;
+            }
+
+            .lesson-item:active {
+                cursor: grabbing;
+            }
+        }
+
+        .select-mode .calendar-cell {
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .select-mode .calendar-cell:hover {
+            background-color: rgba(217, 119, 6, 0.2);
+        }
+
+        .selected-lesson {
+            outline: 3px solid #d97706;
+            outline-offset: 1px;
+        }
+
+        .copy-mode-banner {
+            position: fixed;
+            top: 70px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #d97706;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            z-index: 100;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
         }
 
         .drag-over {
@@ -108,8 +144,13 @@
             dragData: null,
             showRoster: true,
             syncing: false,
+            pendingSync: false, // ローカル変更のクラウド同期待ち
             lastSync: null,
-            config: JSON.parse(localStorage.getItem('calendarConfig') || 'null')
+            config: JSON.parse(localStorage.getItem('calendarConfig') || 'null'),
+            // 選択モード用
+            selectMode: null, // 'copy', 'move', 'addFromRoster'
+            selectedLessonId: null,
+            selectedStudentId: null
         };
 
         // Japanese Holidays
@@ -172,19 +213,24 @@
         async function syncToCloud() {
             if (!state.config || state.syncing) return;
             state.syncing = true;
+            state.pendingSync = true; // ローカル変更をマーク
             try {
                 await updateBin(state.config.binId, { lessons: state.lessons, students: state.students, updatedAt: Date.now() });
                 state.lastSync = new Date();
-            } catch (e) { console.error('Sync error:', e); }
+                state.pendingSync = false; // 同期完了
+            } catch (e) {
+                console.error('Sync error:', e);
+                state.pendingSync = false;
+            }
             state.syncing = false;
             render();
         }
 
         async function syncFromCloud() {
-            if (!state.config) return;
+            if (!state.config || state.syncing || state.pendingSync) return; // ローカル変更中はスキップ
             try {
                 const data = await readBin(state.config.binId);
-                if (data) {
+                if (data && !state.pendingSync) { // 再度チェック
                     state.lessons = data.lessons || [];
                     state.students = data.students || [];
                     state.lastSync = new Date();
@@ -389,7 +435,7 @@
                 const isSaturday = d.date.getDay() === 6;
                 return `
                 <div class="calendar-cell border-b border-r border-wood-100 p-1 ${d.current ? 'bg-white' : 'bg-gray-50'} ${isTeacher ? 'cursor-pointer hover:bg-wood-50' : ''}" 
-                     data-date="${dateStr}" ondragover="handleDragOver(event)" ondrop="handleDrop(event, '${dateStr}')" ${isTeacher ? `onclick="openAddLesson('${dateStr}')"` : ''}>
+                     data-date="${dateStr}" ondragover="handleDragOver(event)" ondrop="handleDrop(event, '${dateStr}')" ${isTeacher ? `onclick="handleCalendarCellClick('${dateStr}', true)"` : ''}>
                   <div class="flex items-center justify-between mb-1">
                     <span class="text-xs md:text-sm font-semibold ${isToday ? 'bg-wood-500 text-white rounded-full w-6 h-6 flex items-center justify-center' : ''} ${isSunday || isHoliday ? 'text-red-500' : isSaturday ? 'text-blue-500' : ''}">${d.date.getDate()}</span>
                     ${isHoliday ? `<span class="text-[9px] text-red-500 truncate hidden md:block">${isHoliday}</span>` : ''}
@@ -421,7 +467,8 @@
                    data-student-id="${s.id}" draggable="true" ondragstart="handleStudentDragStart(event, '${s.id}')">
                 <div class="flex items-center justify-between">
                   <div><div class="font-medium text-sm">${s.name}</div><div class="text-xs text-gray-600">${s.defaultTime} / ${s.lessonType === 'acoustic' ? 'アコギ' : 'エレキ'}</div></div>
-                  <div class="flex gap-1">
+                  <div class="flex gap-1 items-center">
+                    <button onclick="startAddFromRosterMode('${s.id}')" class="text-xs bg-wood-500 text-white px-2 py-1 rounded hover:bg-wood-600">📅+</button>
                     <button onclick="editStudent('${s.id}')" class="text-xs text-wood-600 hover:text-wood-800">編集</button>
                     <button onclick="deleteStudent('${s.id}')" class="text-xs text-red-500 hover:text-red-700">削除</button>
                   </div>
@@ -637,7 +684,14 @@
                 <div><label class="block text-sm font-medium mb-1">レッスンタイプ</label><select name="lessonType" class="w-full border rounded px-3 py-2"><option value="acoustic" ${l.lessonType === 'acoustic' ? 'selected' : ''}>アコギ</option><option value="electric" ${l.lessonType === 'electric' ? 'selected' : ''}>エレキ</option></select></div>
                 <div class="flex items-center gap-2"><input type="checkbox" name="isShared" id="isSharedEdit" ${l.isShared ? 'checked' : ''}><label for="isSharedEdit" class="text-sm">共有イベント（全員に表示）</label></div>
               </div>
-              <div class="mt-6 flex gap-2 justify-end">
+              <div class="mt-4 p-3 bg-wood-50 rounded-lg">
+                <p class="text-sm text-wood-700 mb-2">📅 別の日に移動・コピー</p>
+                <div class="flex gap-2">
+                  <button type="button" onclick="startSelectMode('copy', '${id}')" class="flex-1 px-3 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm">コピー</button>
+                  <button type="button" onclick="startSelectMode('move', '${id}')" class="flex-1 px-3 py-2 bg-green-500 text-white rounded hover:bg-green-600 text-sm">移動</button>
+                </div>
+              </div>
+              <div class="mt-4 flex gap-2 justify-end">
                 <button type="button" onclick="deleteLesson('${id}')" class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600">削除</button>
                 <button type="button" onclick="closeModal()" class="px-4 py-2 border rounded hover:bg-gray-100">キャンセル</button>
                 <button type="submit" class="px-4 py-2 bg-wood-500 text-white rounded hover:bg-wood-600">保存</button>
@@ -666,6 +720,86 @@
 
         function autoEndTime(el) { el.closest('form').endTime.value = addHour(el.value); }
         function closeModal(e) { if (e && e.target !== e.currentTarget) return; document.querySelector('.fixed.inset-0')?.remove(); }
+
+        // 選択モード（モバイル用コピー/移動）
+        function startSelectMode(mode, lessonId) {
+            state.selectMode = mode;
+            state.selectedLessonId = lessonId;
+            closeModal();
+            render();
+            showSelectModeBanner();
+        }
+
+        function startAddFromRosterMode(studentId) {
+            state.selectMode = 'addFromRoster';
+            state.selectedStudentId = studentId;
+            render();
+            showSelectModeBanner();
+        }
+
+        function showSelectModeBanner() {
+            const existing = document.querySelector('.copy-mode-banner');
+            if (existing) existing.remove();
+
+            let message = '';
+            if (state.selectMode === 'copy') message = '📅 日付をタップしてコピー先を選択';
+            else if (state.selectMode === 'move') message = '📅 日付をタップして移動先を選択';
+            else if (state.selectMode === 'addFromRoster') message = '📅 日付をタップして予定を作成';
+
+            const banner = document.createElement('div');
+            banner.className = 'copy-mode-banner';
+            banner.innerHTML = `${message} <button onclick="cancelSelectMode()" style="margin-left:8px; background:rgba(255,255,255,0.2); padding:2px 8px; border-radius:10px;">✕ キャンセル</button>`;
+            document.body.appendChild(banner);
+            document.getElementById('app').classList.add('select-mode');
+        }
+
+        function cancelSelectMode() {
+            state.selectMode = null;
+            state.selectedLessonId = null;
+            state.selectedStudentId = null;
+            document.querySelector('.copy-mode-banner')?.remove();
+            document.getElementById('app').classList.remove('select-mode');
+            render();
+        }
+
+        function handleCalendarCellClick(date, isTeacher) {
+            if (state.selectMode && isTeacher) {
+                executeSelectMode(date);
+            } else if (isTeacher && !state.selectMode) {
+                openAddLesson(date);
+            }
+        }
+
+        function executeSelectMode(date) {
+            if (state.selectMode === 'copy' && state.selectedLessonId) {
+                const lesson = state.lessons.find(l => l.id === state.selectedLessonId);
+                if (lesson) {
+                    state.lessons.push({ ...lesson, id: generateId(), date });
+                    syncToCloud();
+                }
+            } else if (state.selectMode === 'move' && state.selectedLessonId) {
+                const lesson = state.lessons.find(l => l.id === state.selectedLessonId);
+                if (lesson) {
+                    lesson.date = date;
+                    syncToCloud();
+                }
+            } else if (state.selectMode === 'addFromRoster' && state.selectedStudentId) {
+                const student = state.students.find(s => s.id === state.selectedStudentId);
+                if (student) {
+                    state.lessons.push({
+                        id: generateId(),
+                        date,
+                        studentName: student.name,
+                        startTime: student.defaultTime,
+                        endTime: addHour(student.defaultTime),
+                        lessonType: student.lessonType,
+                        isShared: false
+                    });
+                    syncToCloud();
+                }
+            }
+            cancelSelectMode();
+        }
 
         // Student management
         function openAddStudent() {
