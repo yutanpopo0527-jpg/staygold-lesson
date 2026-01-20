@@ -74,6 +74,20 @@
                 opacity: 0.5;
             }
         }
+
+        .touch-dragging {
+            position: fixed;
+            z-index: 9999;
+            pointer-events: none;
+            opacity: 0.8;
+            transform: scale(1.05);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .touch-drop-target {
+            background-color: rgba(217, 119, 6, 0.3) !important;
+            border: 2px dashed #d97706 !important;
+        }
     </style>
 </head>
 
@@ -382,7 +396,7 @@
                   </div>
                   <div class="space-y-1">${dayLessons.map(l => `
                     <div class="lesson-item p-1 rounded text-white ${l.isShared ? 'bg-shared-500' : l.lessonType === 'acoustic' ? 'bg-acoustic-500' : 'bg-electric-500'}" 
-                         draggable="${isTeacher}" ondragstart="handleDragStart(event, '${l.id}')" ${isTeacher ? `onclick="event.stopPropagation(); openEditLesson('${l.id}')"` : ''}>
+                         data-lesson-id="${l.id}" draggable="${isTeacher}" ondragstart="handleDragStart(event, '${l.id}')" ${isTeacher ? `onclick="event.stopPropagation(); openEditLesson('${l.id}')"` : ''}>
                       ${l.isShared ? '☆ ' : ''}${l.startTime} ${l.studentName}
                     </div>
                   `).join('')}</div>
@@ -404,7 +418,7 @@
           <div class="space-y-2 max-h-96 overflow-y-auto">
             ${state.students.map(s => `
               <div class="student-card p-2 rounded border ${s.lessonType === 'acoustic' ? 'bg-acoustic-100 border-acoustic-300' : 'bg-electric-100 border-electric-300'}" 
-                   draggable="true" ondragstart="handleStudentDragStart(event, '${s.id}')">
+                   data-student-id="${s.id}" draggable="true" ondragstart="handleStudentDragStart(event, '${s.id}')">
                 <div class="flex items-center justify-between">
                   <div><div class="font-medium text-sm">${s.name}</div><div class="text-xs text-gray-600">${s.defaultTime} / ${s.lessonType === 'acoustic' ? 'アコギ' : 'エレキ'}</div></div>
                   <div class="flex gap-1">
@@ -459,12 +473,17 @@
         function goToday() { state.currentDate = new Date(); render(); }
         function toggleRoster() { state.showRoster = !state.showRoster; render(); }
 
-        // Drag and drop
+        // Drag and drop (PC)
         function handleDragStart(e, id) { state.dragData = { type: 'lesson', id }; e.dataTransfer.effectAllowed = 'copyMove'; }
         function handleStudentDragStart(e, id) { state.dragData = { type: 'student', id }; e.dataTransfer.effectAllowed = 'copy'; if (window.innerWidth < 1024) { state.showRoster = false; render(); } }
         function handleDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }
         function handleDrop(e, date) {
             e.preventDefault(); e.currentTarget.classList.remove('drag-over');
+            if (!state.dragData) return;
+            executeDrop(date);
+        }
+
+        function executeDrop(date) {
             if (!state.dragData) return;
             if (state.dragData.type === 'lesson') {
                 const mode = confirm('コピーしますか？\n（OKでコピー、キャンセルで移動）') ? 'copy' : 'move';
@@ -482,6 +501,98 @@
                 }
             }
             state.dragData = null;
+        }
+
+        // Touch drag and drop (Mobile/Tablet)
+        let touchDragElement = null;
+        let touchStartX = 0, touchStartY = 0;
+        let currentDropTarget = null;
+
+        function handleTouchStart(e, type, id) {
+            const touch = e.touches[0];
+            touchStartX = touch.clientX;
+            touchStartY = touch.clientY;
+            state.dragData = { type, id };
+
+            // Create floating element
+            const el = e.currentTarget;
+            touchDragElement = el.cloneNode(true);
+            touchDragElement.classList.add('touch-dragging');
+            touchDragElement.style.width = el.offsetWidth + 'px';
+            touchDragElement.style.left = touch.clientX - el.offsetWidth / 2 + 'px';
+            touchDragElement.style.top = touch.clientY - 20 + 'px';
+            document.body.appendChild(touchDragElement);
+
+            if (type === 'student' && window.innerWidth < 1024) {
+                state.showRoster = false;
+                render();
+            }
+        }
+
+        function handleTouchMove(e) {
+            if (!touchDragElement || !state.dragData) return;
+            e.preventDefault();
+
+            const touch = e.touches[0];
+            touchDragElement.style.left = touch.clientX - touchDragElement.offsetWidth / 2 + 'px';
+            touchDragElement.style.top = touch.clientY - 20 + 'px';
+
+            // Find drop target
+            const elemBelow = document.elementFromPoint(touch.clientX, touch.clientY);
+            const cell = elemBelow?.closest('.calendar-cell');
+
+            // Clear previous target
+            if (currentDropTarget && currentDropTarget !== cell) {
+                currentDropTarget.classList.remove('touch-drop-target');
+            }
+
+            if (cell) {
+                cell.classList.add('touch-drop-target');
+                currentDropTarget = cell;
+            } else {
+                currentDropTarget = null;
+            }
+        }
+
+        function handleTouchEnd(e) {
+            if (!touchDragElement) return;
+
+            // Clean up floating element
+            touchDragElement.remove();
+            touchDragElement = null;
+
+            // Clear drop target highlight
+            if (currentDropTarget) {
+                currentDropTarget.classList.remove('touch-drop-target');
+                const date = currentDropTarget.dataset.date;
+                if (date) {
+                    executeDrop(date);
+                }
+                currentDropTarget = null;
+            } else {
+                state.dragData = null;
+            }
+        }
+
+        function attachTouchListeners() {
+            // Lesson items
+            document.querySelectorAll('.lesson-item').forEach(el => {
+                const id = el.getAttribute('data-lesson-id');
+                if (id) {
+                    el.addEventListener('touchstart', (e) => handleTouchStart(e, 'lesson', id), { passive: false });
+                }
+            });
+
+            // Student cards
+            document.querySelectorAll('.student-card').forEach(el => {
+                const id = el.getAttribute('data-student-id');
+                if (id) {
+                    el.addEventListener('touchstart', (e) => handleTouchStart(e, 'student', id), { passive: false });
+                }
+            });
+
+            document.addEventListener('touchmove', handleTouchMove, { passive: false });
+            document.addEventListener('touchend', handleTouchEnd);
         }
 
         // Lesson modals
@@ -627,7 +738,10 @@
             const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' })); a.download = `lessons_${y}${String(m + 1).padStart(2, '0')}.ics`; a.click();
         }
 
-        function attachEventListeners() { document.querySelectorAll('[ondragover]').forEach(el => el.addEventListener('dragleave', e => e.currentTarget.classList.remove('drag-over'))); }
+        function attachEventListeners() {
+            document.querySelectorAll('[ondragover]').forEach(el => el.addEventListener('dragleave', e => e.currentTarget.classList.remove('drag-over')));
+            attachTouchListeners();
+        }
 
         // Initialize
         if (state.config) startSync();
