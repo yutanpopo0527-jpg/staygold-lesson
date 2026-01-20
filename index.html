@@ -174,9 +174,23 @@
                     state.lessons = data.lessons || [];
                     state.students = data.students || [];
                     state.lastSync = new Date();
-                    render();
+                    // 入力中はフルレンダーしない（フォーカスが失われるため）
+                    const activeEl = document.activeElement;
+                    if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'SELECT' || activeEl.tagName === 'TEXTAREA')) {
+                        renderCalendarOnly();
+                        updateRosterOnly();
+                    } else {
+                        render();
+                    }
                 }
             } catch (e) { console.error('Fetch error:', e); }
+        }
+
+        function updateRosterOnly() {
+            const rosterPanel = document.getElementById('rosterPanel');
+            if (rosterPanel && state.mode === 'teacher') {
+                rosterPanel.innerHTML = renderRoster();
+            }
         }
 
         // Auto-sync every 5 seconds
