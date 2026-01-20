@@ -1,100 +1,211 @@
 <!DOCTYPE html>
 <html lang="ja">
+
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>レッスンスケジュール</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            wood: { 50: '#fdf8f3', 100: '#f9ead9', 200: '#f2d4b0', 300: '#e9b77a', 400: '#df9545', 500: '#d67c2a', 600: '#c46420', 700: '#a34d1c', 800: '#833f1e', 900: '#6c351b' },
-            acoustic: { 100: '#fef3c7', 200: '#fde68a', 500: '#f59e0b', 600: '#d97706' },
-            electric: { 100: '#dbeafe', 200: '#bfdbfe', 500: '#3b82f6', 600: '#2563eb' },
-            shared: { 100: '#f3e8ff', 200: '#e9d5ff', 500: '#a855f7', 600: '#9333ea' }
-          }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>レッスンスケジュール</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        wood: { 50: '#fdf8f3', 100: '#f9ead9', 200: '#f2d4b0', 300: '#e9b77a', 400: '#df9545', 500: '#d67c2a', 600: '#c46420', 700: '#a34d1c', 800: '#833f1e', 900: '#6c351b' },
+                        acoustic: { 100: '#fef3c7', 200: '#fde68a', 500: '#f59e0b', 600: '#d97706' },
+                        electric: { 100: '#dbeafe', 200: '#bfdbfe', 500: '#3b82f6', 600: '#2563eb' },
+                        shared: { 100: '#f3e8ff', 200: '#e9d5ff', 500: '#a855f7', 600: '#9333ea' }
+                    }
+                }
+            }
         }
-      }
-    }
-  </script>
-  <style>
-    .calendar-cell { min-height: 80px; }
-    @media (min-width: 768px) { .calendar-cell { min-height: 120px; } }
-    .lesson-item { cursor: grab; font-size: 11px; line-height: 1.2; word-break: break-all; white-space: normal; }
-    .lesson-item:active { cursor: grabbing; }
-    .drag-over { background-color: rgba(217, 119, 6, 0.2); }
-    .student-card { cursor: grab; }
-    .student-card:active { cursor: grabbing; }
-    .holiday { color: #dc2626; }
-    .dragging-roster { position: fixed; z-index: 9999; pointer-events: none; opacity: 0.8; }
-  </style>
+    </script>
+    <style>
+        .calendar-cell {
+            min-height: 80px;
+        }
+
+        @media (min-width: 768px) {
+            .calendar-cell {
+                min-height: 120px;
+            }
+        }
+
+        .lesson-item {
+            cursor: grab;
+            font-size: 11px;
+            line-height: 1.2;
+            word-break: break-all;
+            white-space: normal;
+        }
+
+        .lesson-item:active {
+            cursor: grabbing;
+        }
+
+        .drag-over {
+            background-color: rgba(217, 119, 6, 0.2);
+        }
+
+        .student-card {
+            cursor: grab;
+        }
+
+        .student-card:active {
+            cursor: grabbing;
+        }
+
+        .holiday {
+            color: #dc2626;
+        }
+
+        .sync-indicator {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+    </style>
 </head>
+
 <body class="bg-wood-50 min-h-screen">
-  <div id="app"></div>
+    <div id="app"></div>
 
-  <script>
-    // State
-    const state = {
-      mode: null, // 'teacher' or 'student'
-      currentDate: new Date(),
-      lessons: JSON.parse(localStorage.getItem('lessons') || '[]'),
-      students: JSON.parse(localStorage.getItem('students') || '[]'),
-      searchName: '',
-      dragData: null,
-      dragMode: null, // 'copy' or 'move'
-      showRoster: true
-    };
+    <script>
+        // JSONBin.io Configuration
+        const JSONBIN_API = 'https://api.jsonbin.io/v3/b';
 
-    // Japanese Holidays 2024-2027
-    const holidays = {
-      '2024-01-01': '元日', '2024-01-08': '成人の日', '2024-02-11': '建国記念の日', '2024-02-12': '振替休日',
-      '2024-02-23': '天皇誕生日', '2024-03-20': '春分の日', '2024-04-29': '昭和の日', '2024-05-03': '憲法記念日',
-      '2024-05-04': 'みどりの日', '2024-05-05': 'こどもの日', '2024-05-06': '振替休日', '2024-07-15': '海の日',
-      '2024-08-11': '山の日', '2024-08-12': '振替休日', '2024-09-16': '敬老の日', '2024-09-22': '秋分の日',
-      '2024-09-23': '振替休日', '2024-10-14': 'スポーツの日', '2024-11-03': '文化の日', '2024-11-04': '振替休日',
-      '2024-11-23': '勤労感謝の日', '2025-01-01': '元日', '2025-01-13': '成人の日', '2025-02-11': '建国記念の日',
-      '2025-02-23': '天皇誕生日', '2025-02-24': '振替休日', '2025-03-20': '春分の日', '2025-04-29': '昭和の日',
-      '2025-05-03': '憲法記念日', '2025-05-04': 'みどりの日', '2025-05-05': 'こどもの日', '2025-05-06': '振替休日',
-      '2025-07-21': '海の日', '2025-08-11': '山の日', '2025-09-15': '敬老の日', '2025-09-23': '秋分の日',
-      '2025-10-13': 'スポーツの日', '2025-11-03': '文化の日', '2025-11-23': '勤労感謝の日', '2025-11-24': '振替休日',
-      '2026-01-01': '元日', '2026-01-12': '成人の日', '2026-02-11': '建国記念の日', '2026-02-23': '天皇誕生日',
-      '2026-03-20': '春分の日', '2026-04-29': '昭和の日', '2026-05-03': '憲法記念日', '2026-05-04': 'みどりの日',
-      '2026-05-05': 'こどもの日', '2026-05-06': '振替休日', '2026-07-20': '海の日', '2026-08-11': '山の日',
-      '2026-09-21': '敬老の日', '2026-09-22': '国民の休日', '2026-09-23': '秋分の日', '2026-10-12': 'スポーツの日',
-      '2026-11-03': '文化の日', '2026-11-23': '勤労感謝の日', '2027-01-01': '元日', '2027-01-11': '成人の日',
-      '2027-02-11': '建国記念の日', '2027-02-23': '天皇誕生日', '2027-03-21': '春分の日', '2027-03-22': '振替休日',
-      '2027-04-29': '昭和の日', '2027-05-03': '憲法記念日', '2027-05-04': 'みどりの日', '2027-05-05': 'こどもの日',
-      '2027-07-19': '海の日', '2027-08-11': '山の日', '2027-09-20': '敬老の日', '2027-09-23': '秋分の日',
-      '2027-10-11': 'スポーツの日', '2027-11-03': '文化の日', '2027-11-23': '勤労感謝の日'
-    };
+        // State
+        const state = {
+            mode: null,
+            currentDate: new Date(),
+            lessons: [],
+            students: [],
+            searchName: '',
+            dragData: null,
+            showRoster: true,
+            syncing: false,
+            lastSync: null,
+            config: JSON.parse(localStorage.getItem('calendarConfig') || 'null')
+        };
 
-    // Utility functions
-    const formatDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-    const save = () => { localStorage.setItem('lessons', JSON.stringify(state.lessons)); localStorage.setItem('students', JSON.stringify(state.students)); };
-    const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2);
-    const timeOptions = () => { const opts = []; for(let h=9; h<=21; h++) for(let m=0; m<60; m+=30) opts.push(`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`); return opts; };
-    const addHour = (t) => { const [h,m] = t.split(':').map(Number); const nh = h+1; return `${String(nh).padStart(2,'0')}:${String(m).padStart(2,'0')}`; };
+        // Japanese Holidays
+        const holidays = {
+            '2024-01-01': '元日', '2024-01-08': '成人の日', '2024-02-11': '建国記念の日', '2024-02-12': '振替休日',
+            '2024-02-23': '天皇誕生日', '2024-03-20': '春分の日', '2024-04-29': '昭和の日', '2024-05-03': '憲法記念日',
+            '2024-05-04': 'みどりの日', '2024-05-05': 'こどもの日', '2024-05-06': '振替休日', '2024-07-15': '海の日',
+            '2024-08-11': '山の日', '2024-08-12': '振替休日', '2024-09-16': '敬老の日', '2024-09-22': '秋分の日',
+            '2024-09-23': '振替休日', '2024-10-14': 'スポーツの日', '2024-11-03': '文化の日', '2024-11-04': '振替休日',
+            '2024-11-23': '勤労感謝の日', '2025-01-01': '元日', '2025-01-13': '成人の日', '2025-02-11': '建国記念の日',
+            '2025-02-23': '天皇誕生日', '2025-02-24': '振替休日', '2025-03-20': '春分の日', '2025-04-29': '昭和の日',
+            '2025-05-03': '憲法記念日', '2025-05-04': 'みどりの日', '2025-05-05': 'こどもの日', '2025-05-06': '振替休日',
+            '2025-07-21': '海の日', '2025-08-11': '山の日', '2025-09-15': '敬老の日', '2025-09-23': '秋分の日',
+            '2025-10-13': 'スポーツの日', '2025-11-03': '文化の日', '2025-11-23': '勤労感謝の日', '2025-11-24': '振替休日',
+            '2026-01-01': '元日', '2026-01-12': '成人の日', '2026-02-11': '建国記念の日', '2026-02-23': '天皇誕生日',
+            '2026-03-20': '春分の日', '2026-04-29': '昭和の日', '2026-05-03': '憲法記念日', '2026-05-04': 'みどりの日',
+            '2026-05-05': 'こどもの日', '2026-05-06': '振替休日', '2026-07-20': '海の日', '2026-08-11': '山の日',
+            '2026-09-21': '敬老の日', '2026-09-22': '国民の休日', '2026-09-23': '秋分の日', '2026-10-12': 'スポーツの日',
+            '2026-11-03': '文化の日', '2026-11-23': '勤労感謝の日', '2027-01-01': '元日', '2027-01-11': '成人の日',
+            '2027-02-11': '建国記念の日', '2027-02-23': '天皇誕生日', '2027-03-21': '春分の日', '2027-03-22': '振替休日',
+            '2027-04-29': '昭和の日', '2027-05-03': '憲法記念日', '2027-05-04': 'みどりの日', '2027-05-05': 'こどもの日',
+            '2027-07-19': '海の日', '2027-08-11': '山の日', '2027-09-20': '敬老の日', '2027-09-23': '秋分の日',
+            '2027-10-11': 'スポーツの日', '2027-11-03': '文化の日', '2027-11-23': '勤労感謝の日'
+        };
 
-    // Get calendar days
-    function getCalendarDays(year, month) {
-      const first = new Date(year, month, 1);
-      const last = new Date(year, month + 1, 0);
-      const days = [];
-      const startDay = first.getDay();
-      for (let i = startDay - 1; i >= 0; i--) days.push({ date: new Date(year, month, -i), current: false });
-      for (let i = 1; i <= last.getDate(); i++) days.push({ date: new Date(year, month, i), current: true });
-      const remaining = 42 - days.length;
-      for (let i = 1; i <= remaining; i++) days.push({ date: new Date(year, month + 1, i), current: false });
-      return days;
-    }
+        // Utility functions
+        const formatDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2);
+        const timeOptions = () => { const opts = []; for (let h = 9; h <= 21; h++) for (let m = 0; m < 60; m += 30) opts.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`); return opts; };
+        const addHour = (t) => { const [h, m] = t.split(':').map(Number); return `${String(h + 1).padStart(2, '0')}:${String(m).padStart(2, '0')}`; };
 
-    // Render
-    function render() {
-      const app = document.getElementById('app');
-      if (!state.mode) { app.innerHTML = renderLogin(); return; }
-      app.innerHTML = `
+        // JSONBin.io API functions
+        async function createBin(apiKey, data) {
+            const res = await fetch(JSONBIN_API, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Master-Key': apiKey, 'X-Bin-Private': 'false' },
+                body: JSON.stringify(data)
+            });
+            const json = await res.json();
+            if (!res.ok) throw new Error(json.message || 'Bin作成に失敗しました');
+            return json.metadata.id;
+        }
+
+        async function updateBin(binId, data) {
+            await fetch(`${JSONBIN_API}/${binId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'X-Master-Key': state.config.apiKey },
+                body: JSON.stringify(data)
+            });
+        }
+
+        async function readBin(binId) {
+            const res = await fetch(`${JSONBIN_API}/${binId}/latest`, {
+                headers: { 'X-Master-Key': state.config.apiKey }
+            });
+            const json = await res.json();
+            return json.record;
+        }
+
+        async function syncToCloud() {
+            if (!state.config || state.syncing) return;
+            state.syncing = true;
+            try {
+                await updateBin(state.config.binId, { lessons: state.lessons, students: state.students, updatedAt: Date.now() });
+                state.lastSync = new Date();
+            } catch (e) { console.error('Sync error:', e); }
+            state.syncing = false;
+            render();
+        }
+
+        async function syncFromCloud() {
+            if (!state.config) return;
+            try {
+                const data = await readBin(state.config.binId);
+                if (data) {
+                    state.lessons = data.lessons || [];
+                    state.students = data.students || [];
+                    state.lastSync = new Date();
+                    render();
+                }
+            } catch (e) { console.error('Fetch error:', e); }
+        }
+
+        // Auto-sync every 5 seconds
+        let syncInterval;
+        function startSync() {
+            if (syncInterval) clearInterval(syncInterval);
+            syncFromCloud();
+            syncInterval = setInterval(syncFromCloud, 5000);
+        }
+
+        // Get calendar days
+        function getCalendarDays(year, month) {
+            const first = new Date(year, month, 1);
+            const last = new Date(year, month + 1, 0);
+            const days = [];
+            const startDay = first.getDay();
+            for (let i = startDay - 1; i >= 0; i--) days.push({ date: new Date(year, month, -i), current: false });
+            for (let i = 1; i <= last.getDate(); i++) days.push({ date: new Date(year, month, i), current: true });
+            const remaining = 42 - days.length;
+            for (let i = 1; i <= remaining; i++) days.push({ date: new Date(year, month + 1, i), current: false });
+            return days;
+        }
+
+        // Render functions
+        function render() {
+            const app = document.getElementById('app');
+            if (!state.config) { app.innerHTML = renderSetup(); return; }
+            if (!state.mode) { app.innerHTML = renderLogin(); return; }
+            app.innerHTML = `
         <header class="bg-gradient-to-r from-wood-600 to-wood-700 text-white p-4 shadow-lg sticky top-0 z-40">
           <div class="max-w-7xl mx-auto flex justify-between items-center flex-wrap gap-2">
             <h1 class="text-xl md:text-2xl font-bold flex items-center gap-2">
@@ -102,6 +213,7 @@
               レッスンスケジュール
             </h1>
             <div class="flex items-center gap-2 flex-wrap">
+              <span class="text-xs ${state.syncing ? 'sync-indicator' : ''}">${state.lastSync ? '✓ 同期済' : '同期中...'}</span>
               ${state.mode === 'student' ? `<input type="text" placeholder="名前で検索" value="${state.searchName}" onchange="updateSearch(this.value)" class="px-3 py-1 rounded text-gray-800 text-sm w-32">` : ''}
               <span class="text-sm bg-wood-500 px-2 py-1 rounded">${state.mode === 'teacher' ? '先生用' : 'レッスン生用'}</span>
               <button onclick="logout()" class="bg-wood-800 hover:bg-wood-900 px-3 py-1 rounded text-sm">ログアウト</button>
@@ -112,11 +224,56 @@
           ${state.mode === 'teacher' ? renderTeacherView() : renderStudentView()}
         </main>
       `;
-      attachEventListeners();
-    }
+            attachEventListeners();
+        }
 
-    function renderLogin() {
-      return `
+        function renderSetup() {
+            return `
+        <div class="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-wood-100 to-wood-200">
+          <div class="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
+            <div class="text-center mb-6">
+              <div class="w-16 h-16 bg-wood-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
+              </div>
+              <h1 class="text-2xl font-bold text-wood-800">初期設定</h1>
+              <p class="text-wood-600 mt-2 text-sm">クラウド同期の設定を行います</p>
+            </div>
+            <div class="space-y-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">JSONBin.io APIキー</label>
+                <input type="text" id="apiKey" placeholder="$2a$10$..." class="w-full px-4 py-3 border border-wood-300 rounded-lg focus:ring-2 focus:ring-wood-500">
+                <p class="text-xs text-gray-500 mt-1">jsonbin.io のX-Master-Keyを入力</p>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Bin ID（既存データがある場合）</label>
+                <input type="text" id="binId" placeholder="省略可能" class="w-full px-4 py-3 border border-wood-300 rounded-lg focus:ring-2 focus:ring-wood-500">
+                <p class="text-xs text-gray-500 mt-1">他のデバイスと同期する場合に入力</p>
+              </div>
+              <button onclick="setupConfig()" class="w-full bg-wood-600 hover:bg-wood-700 text-white py-3 rounded-lg font-semibold transition">設定を保存</button>
+            </div>
+          </div>
+        </div>
+      `;
+        }
+
+        async function setupConfig() {
+            const apiKey = document.getElementById('apiKey').value.trim();
+            let binId = document.getElementById('binId').value.trim();
+            if (!apiKey) { alert('APIキーを入力してください'); return; }
+            try {
+                if (!binId) {
+                    binId = await createBin(apiKey, { lessons: [], students: [], updatedAt: Date.now() });
+                    alert('新しいBinを作成しました。\n他のデバイスで同期するには以下のBin IDを使用してください:\n\n' + binId);
+                }
+                state.config = { apiKey, binId };
+                localStorage.setItem('calendarConfig', JSON.stringify(state.config));
+                startSync();
+                render();
+            } catch (e) { alert('エラーが発生しました: ' + e.message); }
+        }
+
+        function renderLogin() {
+            return `
         <div class="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-wood-100 to-wood-200">
           <div class="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
             <div class="text-center mb-8">
@@ -125,54 +282,53 @@
               </div>
               <h1 class="text-2xl font-bold text-wood-800">レッスンスケジュール</h1>
               <p class="text-wood-600 mt-2">ギターレッスン予約管理</p>
+              <p class="text-xs text-gray-500 mt-1">Bin ID: ${state.config.binId}</p>
             </div>
             <div class="space-y-4">
               <button onclick="enterStudent()" class="w-full bg-wood-500 hover:bg-wood-600 text-white py-3 rounded-lg font-semibold transition">レッスン生として入る</button>
-              <div class="relative">
-                <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-gray-300"></div></div>
-                <div class="relative flex justify-center text-sm"><span class="px-2 bg-white text-gray-500">または</span></div>
-              </div>
-              <div id="teacherLogin">
-                <input type="password" id="teacherPass" placeholder="先生用パスワード(4桁)" maxlength="4" class="w-full px-4 py-3 border border-wood-300 rounded-lg focus:ring-2 focus:ring-wood-500 focus:border-transparent text-center text-xl tracking-widest">
+              <div class="relative"><div class="absolute inset-0 flex items-center"><div class="w-full border-t border-gray-300"></div></div><div class="relative flex justify-center text-sm"><span class="px-2 bg-white text-gray-500">または</span></div></div>
+              <div>
+                <input type="password" id="teacherPass" placeholder="先生用パスワード(4桁)" maxlength="4" class="w-full px-4 py-3 border border-wood-300 rounded-lg focus:ring-2 focus:ring-wood-500 text-center text-xl tracking-widest">
                 <button onclick="enterTeacher()" class="w-full mt-3 bg-wood-700 hover:bg-wood-800 text-white py-3 rounded-lg font-semibold transition">先生として入る</button>
               </div>
+              <button onclick="resetConfig()" class="w-full text-sm text-gray-500 hover:text-gray-700 mt-4">設定をリセット</button>
             </div>
           </div>
         </div>
       `;
-    }
+        }
 
-    function renderTeacherView() {
-      return `
+        function resetConfig() {
+            if (confirm('設定をリセットしますか？')) {
+                localStorage.removeItem('calendarConfig');
+                state.config = null;
+                render();
+            }
+        }
+
+        function renderTeacherView() {
+            return `
         <div class="flex flex-col lg:flex-row gap-4">
-          <div class="flex-1">
-            ${renderCalendarHeader()}
-            ${renderCalendar(true)}
-          </div>
-          <div class="lg:w-72 ${state.showRoster ? '' : 'hidden'}" id="rosterPanel">
-            ${renderRoster()}
-          </div>
+          <div class="flex-1">${renderCalendarHeader()}${renderCalendar(true)}</div>
+          <div class="lg:w-72 ${state.showRoster ? '' : 'hidden'}" id="rosterPanel">${renderRoster()}</div>
         </div>
         <button onclick="toggleRoster()" class="lg:hidden fixed bottom-4 right-4 bg-wood-600 text-white p-3 rounded-full shadow-lg z-50">
           <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"/></svg>
         </button>
       `;
-    }
+        }
 
-    function renderStudentView() {
-      return `
-        ${renderCalendarHeader()}
-        ${renderCalendar(false)}
-      `;
-    }
+        function renderStudentView() {
+            return `${renderCalendarHeader()}${renderCalendar(false)}`;
+        }
 
-    function renderCalendarHeader() {
-      const y = state.currentDate.getFullYear(), m = state.currentDate.getMonth();
-      return `
+        function renderCalendarHeader() {
+            const y = state.currentDate.getFullYear(), m = state.currentDate.getMonth();
+            return `
         <div class="bg-white rounded-lg shadow p-3 mb-3 flex flex-wrap items-center justify-between gap-2">
           <div class="flex items-center gap-2">
             <button onclick="prevMonth()" class="p-2 hover:bg-wood-100 rounded-lg"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg></button>
-            <span class="text-lg font-bold text-wood-800">${y}年${m+1}月</span>
+            <span class="text-lg font-bold text-wood-800">${y}年${m + 1}月</span>
             <button onclick="nextMonth()" class="p-2 hover:bg-wood-100 rounded-lg"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg></button>
           </div>
           <div class="flex gap-2">
@@ -181,58 +337,51 @@
           </div>
         </div>
       `;
-    }
+        }
 
-    function renderCalendar(isTeacher) {
-      const y = state.currentDate.getFullYear(), m = state.currentDate.getMonth();
-      const days = getCalendarDays(y, m);
-      const today = formatDate(new Date());
-      const weekdays = ['日', '月', '火', '水', '木', '金', '土'];
-      let lessons = state.lessons;
-      if (!isTeacher && state.searchName) {
-        lessons = lessons.filter(l => l.isShared || l.studentName.includes(state.searchName));
-      } else if (!isTeacher) {
-        lessons = lessons.filter(l => l.isShared);
-      }
+        function renderCalendar(isTeacher) {
+            const y = state.currentDate.getFullYear(), m = state.currentDate.getMonth();
+            const days = getCalendarDays(y, m);
+            const today = formatDate(new Date());
+            const weekdays = ['日', '月', '火', '水', '木', '金', '土'];
+            let lessons = state.lessons;
+            if (!isTeacher && state.searchName) lessons = lessons.filter(l => l.isShared || l.studentName.includes(state.searchName));
+            else if (!isTeacher) lessons = lessons.filter(l => l.isShared);
 
-      return `
+            return `
         <div class="bg-white rounded-lg shadow overflow-hidden">
-          <div class="grid grid-cols-7 bg-wood-100">
-            ${weekdays.map((d,i) => `<div class="p-2 text-center font-bold text-sm ${i===0?'text-red-500':i===6?'text-blue-500':'text-wood-800'}">${d}</div>`).join('')}
-          </div>
+          <div class="grid grid-cols-7 bg-wood-100">${weekdays.map((d, i) => `<div class="p-2 text-center font-bold text-sm ${i === 0 ? 'text-red-500' : i === 6 ? 'text-blue-500' : 'text-wood-800'}">${d}</div>`).join('')}</div>
           <div class="grid grid-cols-7 border-t border-wood-200">
-            ${days.map((d, i) => {
-              const dateStr = formatDate(d.date);
-              const dayLessons = lessons.filter(l => l.date === dateStr).sort((a,b) => a.startTime.localeCompare(b.startTime));
-              const isToday = dateStr === today;
-              const isHoliday = holidays[dateStr];
-              const isSunday = d.date.getDay() === 0;
-              const isSaturday = d.date.getDay() === 6;
-              return `
+            ${days.map(d => {
+                const dateStr = formatDate(d.date);
+                const dayLessons = lessons.filter(l => l.date === dateStr).sort((a, b) => a.startTime.localeCompare(b.startTime));
+                const isToday = dateStr === today;
+                const isHoliday = holidays[dateStr];
+                const isSunday = d.date.getDay() === 0;
+                const isSaturday = d.date.getDay() === 6;
+                return `
                 <div class="calendar-cell border-b border-r border-wood-100 p-1 ${d.current ? 'bg-white' : 'bg-gray-50'} ${isTeacher ? 'cursor-pointer hover:bg-wood-50' : ''}" 
                      data-date="${dateStr}" ondragover="handleDragOver(event)" ondrop="handleDrop(event, '${dateStr}')" ${isTeacher ? `onclick="openAddLesson('${dateStr}')"` : ''}>
                   <div class="flex items-center justify-between mb-1">
                     <span class="text-xs md:text-sm font-semibold ${isToday ? 'bg-wood-500 text-white rounded-full w-6 h-6 flex items-center justify-center' : ''} ${isSunday || isHoliday ? 'text-red-500' : isSaturday ? 'text-blue-500' : ''}">${d.date.getDate()}</span>
                     ${isHoliday ? `<span class="text-[9px] text-red-500 truncate hidden md:block">${isHoliday}</span>` : ''}
                   </div>
-                  <div class="space-y-1">
-                    ${dayLessons.map(l => `
-                      <div class="lesson-item p-1 rounded text-white ${l.isShared ? 'bg-shared-500' : l.lessonType === 'acoustic' ? 'bg-acoustic-500' : 'bg-electric-500'}" 
-                           draggable="${isTeacher}" ondragstart="handleDragStart(event, '${l.id}')" ${isTeacher ? `onclick="event.stopPropagation(); openEditLesson('${l.id}')"` : ''}>
-                        ${l.isShared ? '☆ ' : ''}${l.startTime} ${l.studentName}
-                      </div>
-                    `).join('')}
-                  </div>
+                  <div class="space-y-1">${dayLessons.map(l => `
+                    <div class="lesson-item p-1 rounded text-white ${l.isShared ? 'bg-shared-500' : l.lessonType === 'acoustic' ? 'bg-acoustic-500' : 'bg-electric-500'}" 
+                         draggable="${isTeacher}" ondragstart="handleDragStart(event, '${l.id}')" ${isTeacher ? `onclick="event.stopPropagation(); openEditLesson('${l.id}')"` : ''}>
+                      ${l.isShared ? '☆ ' : ''}${l.startTime} ${l.studentName}
+                    </div>
+                  `).join('')}</div>
                 </div>
               `;
             }).join('')}
           </div>
         </div>
       `;
-    }
+        }
 
-    function renderRoster() {
-      return `
+        function renderRoster() {
+            return `
         <div class="bg-white rounded-lg shadow p-3">
           <div class="flex items-center justify-between mb-3">
             <h3 class="font-bold text-wood-800">レッスン生名簿</h3>
@@ -240,13 +389,10 @@
           </div>
           <div class="space-y-2 max-h-96 overflow-y-auto">
             ${state.students.map(s => `
-              <div class="student-card p-2 rounded border ${s.lessonType === 'acoustic' ? 'bg-acoustic-100 border-acoustic-300' : 'bg-electric-100 border-electric-300'} cursor-grab" 
+              <div class="student-card p-2 rounded border ${s.lessonType === 'acoustic' ? 'bg-acoustic-100 border-acoustic-300' : 'bg-electric-100 border-electric-300'}" 
                    draggable="true" ondragstart="handleStudentDragStart(event, '${s.id}')">
                 <div class="flex items-center justify-between">
-                  <div>
-                    <div class="font-medium text-sm">${s.name}</div>
-                    <div class="text-xs text-gray-600">${s.defaultTime} / ${s.lessonType === 'acoustic' ? 'アコギ' : 'エレキ'}</div>
-                  </div>
+                  <div><div class="font-medium text-sm">${s.name}</div><div class="text-xs text-gray-600">${s.defaultTime} / ${s.lessonType === 'acoustic' ? 'アコギ' : 'エレキ'}</div></div>
                   <div class="flex gap-1">
                     <button onclick="editStudent('${s.id}')" class="text-xs text-wood-600 hover:text-wood-800">編集</button>
                     <button onclick="deleteStudent('${s.id}')" class="text-xs text-red-500 hover:text-red-700">削除</button>
@@ -258,64 +404,49 @@
           </div>
         </div>
       `;
-    }
-
-    // Event handlers
-    function enterStudent() { state.mode = 'student'; render(); }
-    function enterTeacher() {
-      const pass = document.getElementById('teacherPass').value;
-      if (pass === '0927') { state.mode = 'teacher'; render(); }
-      else alert('パスワードが違います');
-    }
-    function logout() { state.mode = null; state.searchName = ''; render(); }
-    function updateSearch(v) { state.searchName = v; render(); }
-    function prevMonth() { state.currentDate.setMonth(state.currentDate.getMonth() - 1); render(); }
-    function nextMonth() { state.currentDate.setMonth(state.currentDate.getMonth() + 1); render(); }
-    function goToday() { state.currentDate = new Date(); render(); }
-    function toggleRoster() { state.showRoster = !state.showRoster; render(); }
-
-    // Drag and drop
-    function handleDragStart(e, id) {
-      state.dragData = { type: 'lesson', id };
-      e.dataTransfer.effectAllowed = 'copyMove';
-    }
-    function handleStudentDragStart(e, id) {
-      state.dragData = { type: 'student', id };
-      e.dataTransfer.effectAllowed = 'copy';
-      if (window.innerWidth < 1024) { state.showRoster = false; render(); }
-    }
-    function handleDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }
-    function handleDrop(e, date) {
-      e.preventDefault(); e.currentTarget.classList.remove('drag-over');
-      if (!state.dragData) return;
-      if (state.dragData.type === 'lesson') {
-        const mode = confirm('コピーしますか？\\n（OKでコピー、キャンセルで移動）') ? 'copy' : 'move';
-        const lesson = state.lessons.find(l => l.id === state.dragData.id);
-        if (lesson) {
-          if (mode === 'copy') {
-            state.lessons.push({ ...lesson, id: generateId(), date });
-          } else {
-            lesson.date = date;
-          }
-          save(); render();
         }
-      } else if (state.dragData.type === 'student') {
-        const student = state.students.find(s => s.id === state.dragData.id);
-        if (student) {
-          state.lessons.push({
-            id: generateId(), date, studentName: student.name,
-            startTime: student.defaultTime, endTime: addHour(student.defaultTime),
-            lessonType: student.lessonType, isShared: false
-          });
-          save(); render();
-        }
-      }
-      state.dragData = null;
-    }
 
-    // Lesson modals
-    function openAddLesson(date) {
-      const html = `
+        // Event handlers
+        function enterStudent() { state.mode = 'student'; render(); }
+        function enterTeacher() {
+            if (document.getElementById('teacherPass').value === '0927') { state.mode = 'teacher'; render(); }
+            else alert('パスワードが違います');
+        }
+        function logout() { state.mode = null; state.searchName = ''; render(); }
+        function updateSearch(v) { state.searchName = v; render(); }
+        function prevMonth() { state.currentDate.setMonth(state.currentDate.getMonth() - 1); render(); }
+        function nextMonth() { state.currentDate.setMonth(state.currentDate.getMonth() + 1); render(); }
+        function goToday() { state.currentDate = new Date(); render(); }
+        function toggleRoster() { state.showRoster = !state.showRoster; render(); }
+
+        // Drag and drop
+        function handleDragStart(e, id) { state.dragData = { type: 'lesson', id }; e.dataTransfer.effectAllowed = 'copyMove'; }
+        function handleStudentDragStart(e, id) { state.dragData = { type: 'student', id }; e.dataTransfer.effectAllowed = 'copy'; if (window.innerWidth < 1024) { state.showRoster = false; render(); } }
+        function handleDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }
+        function handleDrop(e, date) {
+            e.preventDefault(); e.currentTarget.classList.remove('drag-over');
+            if (!state.dragData) return;
+            if (state.dragData.type === 'lesson') {
+                const mode = confirm('コピーしますか？\n（OKでコピー、キャンセルで移動）') ? 'copy' : 'move';
+                const lesson = state.lessons.find(l => l.id === state.dragData.id);
+                if (lesson) {
+                    if (mode === 'copy') state.lessons.push({ ...lesson, id: generateId(), date });
+                    else lesson.date = date;
+                    syncToCloud(); render();
+                }
+            } else if (state.dragData.type === 'student') {
+                const student = state.students.find(s => s.id === state.dragData.id);
+                if (student) {
+                    state.lessons.push({ id: generateId(), date, studentName: student.name, startTime: student.defaultTime, endTime: addHour(student.defaultTime), lessonType: student.lessonType, isShared: false });
+                    syncToCloud(); render();
+                }
+            }
+            state.dragData = null;
+        }
+
+        // Lesson modals
+        function openAddLesson(date) {
+            const html = `
         <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onclick="closeModal(event)">
           <div class="bg-white rounded-lg p-6 w-full max-w-md" onclick="event.stopPropagation()">
             <h2 class="text-xl font-bold mb-4 text-wood-800">予定を追加</h2>
@@ -335,15 +466,13 @@
               </div>
             </form>
           </div>
-        </div>
-      `;
-      document.body.insertAdjacentHTML('beforeend', html);
-    }
+        </div>`;
+            document.body.insertAdjacentHTML('beforeend', html);
+        }
 
-    function openEditLesson(id) {
-      const l = state.lessons.find(x => x.id === id);
-      if (!l) return;
-      const html = `
+        function openEditLesson(id) {
+            const l = state.lessons.find(x => x.id === id); if (!l) return;
+            const html = `
         <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onclick="closeModal(event)">
           <div class="bg-white rounded-lg p-6 w-full max-w-md" onclick="event.stopPropagation()">
             <h2 class="text-xl font-bold mb-4 text-wood-800">予定を編集</h2>
@@ -364,47 +493,32 @@
               </div>
             </form>
           </div>
-        </div>
-      `;
-      document.body.insertAdjacentHTML('beforeend', html);
-    }
+        </div>`;
+            document.body.insertAdjacentHTML('beforeend', html);
+        }
 
-    function saveLesson(e, id, date) {
-      e.preventDefault();
-      const form = e.target;
-      const data = {
-        id: id || generateId(), date,
-        studentName: form.studentName.value,
-        startTime: form.startTime.value,
-        endTime: form.endTime.value,
-        lessonType: form.lessonType.value,
-        isShared: form.isShared.checked
-      };
-      if (id) { const idx = state.lessons.findIndex(l => l.id === id); state.lessons[idx] = data; }
-      else { state.lessons.push(data); }
-      save(); closeModal(); render();
-    }
+        function saveLesson(e, id, date) {
+            e.preventDefault();
+            const form = e.target;
+            const data = { id: id || generateId(), date, studentName: form.studentName.value, startTime: form.startTime.value, endTime: form.endTime.value, lessonType: form.lessonType.value, isShared: form.isShared.checked };
+            if (id) { const idx = state.lessons.findIndex(l => l.id === id); state.lessons[idx] = data; }
+            else state.lessons.push(data);
+            syncToCloud(); closeModal(); render();
+        }
 
-    function deleteLesson(id) {
-      if (confirm('この予定を削除しますか？')) {
-        state.lessons = state.lessons.filter(l => l.id !== id);
-        save(); closeModal(); render();
-      }
-    }
+        function deleteLesson(id) {
+            if (confirm('この予定を削除しますか？')) {
+                state.lessons = state.lessons.filter(l => l.id !== id);
+                syncToCloud(); closeModal(); render();
+            }
+        }
 
-    function autoEndTime(el) {
-      const form = el.closest('form');
-      form.endTime.value = addHour(el.value);
-    }
+        function autoEndTime(el) { el.closest('form').endTime.value = addHour(el.value); }
+        function closeModal(e) { if (e && e.target !== e.currentTarget) return; document.querySelector('.fixed.inset-0')?.remove(); }
 
-    function closeModal(e) {
-      if (e && e.target !== e.currentTarget) return;
-      document.querySelector('.fixed.inset-0')?.remove();
-    }
-
-    // Student management
-    function openAddStudent() {
-      const html = `
+        // Student management
+        function openAddStudent() {
+            const html = `
         <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onclick="closeModal(event)">
           <div class="bg-white rounded-lg p-6 w-full max-w-md" onclick="event.stopPropagation()">
             <h2 class="text-xl font-bold mb-4 text-wood-800">生徒を追加</h2>
@@ -420,15 +534,13 @@
               </div>
             </form>
           </div>
-        </div>
-      `;
-      document.body.insertAdjacentHTML('beforeend', html);
-    }
+        </div>`;
+            document.body.insertAdjacentHTML('beforeend', html);
+        }
 
-    function editStudent(id) {
-      const s = state.students.find(x => x.id === id);
-      if (!s) return;
-      const html = `
+        function editStudent(id) {
+            const s = state.students.find(x => x.id === id); if (!s) return;
+            const html = `
         <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onclick="closeModal(event)">
           <div class="bg-white rounded-lg p-6 w-full max-w-md" onclick="event.stopPropagation()">
             <h2 class="text-xl font-bold mb-4 text-wood-800">生徒を編集</h2>
@@ -444,62 +556,43 @@
               </div>
             </form>
           </div>
-        </div>
-      `;
-      document.body.insertAdjacentHTML('beforeend', html);
-    }
+        </div>`;
+            document.body.insertAdjacentHTML('beforeend', html);
+        }
 
-    function saveStudent(e, id) {
-      e.preventDefault();
-      const form = e.target;
-      const data = { id: id || generateId(), name: form.name.value, defaultTime: form.defaultTime.value, lessonType: form.lessonType.value };
-      if (id) { const idx = state.students.findIndex(s => s.id === id); state.students[idx] = data; }
-      else { state.students.push(data); }
-      save(); closeModal(); render();
-    }
+        function saveStudent(e, id) {
+            e.preventDefault();
+            const form = e.target;
+            const data = { id: id || generateId(), name: form.name.value, defaultTime: form.defaultTime.value, lessonType: form.lessonType.value };
+            if (id) { const idx = state.students.findIndex(s => s.id === id); state.students[idx] = data; }
+            else state.students.push(data);
+            syncToCloud(); closeModal(); render();
+        }
 
-    function deleteStudent(id) {
-      if (confirm('この生徒を削除しますか？')) {
-        state.students = state.students.filter(s => s.id !== id);
-        save(); render();
-      }
-    }
+        function deleteStudent(id) {
+            if (confirm('この生徒を削除しますか？')) { state.students = state.students.filter(s => s.id !== id); syncToCloud(); render(); }
+        }
 
-    // Google Calendar export
-    function exportToGoogle() {
-      const y = state.currentDate.getFullYear(), m = state.currentDate.getMonth();
-      const monthLessons = state.lessons.filter(l => {
-        const d = new Date(l.date);
-        return d.getFullYear() === y && d.getMonth() === m;
-      });
-      if (monthLessons.length === 0) { alert('この月に予定がありません'); return; }
-      
-      let ics = 'BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Guitar Lesson Calendar//JP\n';
-      monthLessons.forEach(l => {
-        const dateClean = l.date.replace(/-/g, '');
-        const startClean = l.startTime.replace(':', '') + '00';
-        const endClean = l.endTime.replace(':', '') + '00';
-        ics += `BEGIN:VEVENT\nDTSTART;TZID=Asia/Tokyo:${dateClean}T${startClean}\nDTEND;TZID=Asia/Tokyo:${dateClean}T${endClean}\nSUMMARY:${l.studentName}\nEND:VEVENT\n`;
-      });
-      ics += 'END:VCALENDAR';
-      
-      const blob = new Blob([ics], { type: 'text/calendar' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `lessons_${y}${String(m+1).padStart(2,'0')}.ics`;
-      a.click();
-      URL.revokeObjectURL(url);
-    }
+        // Google Calendar export
+        function exportToGoogle() {
+            const y = state.currentDate.getFullYear(), m = state.currentDate.getMonth();
+            const monthLessons = state.lessons.filter(l => { const d = new Date(l.date); return d.getFullYear() === y && d.getMonth() === m; });
+            if (monthLessons.length === 0) { alert('この月に予定がありません'); return; }
+            let ics = 'BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Guitar Lesson//JP\n';
+            monthLessons.forEach(l => {
+                const dc = l.date.replace(/-/g, ''), sc = l.startTime.replace(':', '') + '00', ec = l.endTime.replace(':', '') + '00';
+                ics += `BEGIN:VEVENT\nDTSTART;TZID=Asia/Tokyo:${dc}T${sc}\nDTEND;TZID=Asia/Tokyo:${dc}T${ec}\nSUMMARY:${l.studentName}\nEND:VEVENT\n`;
+            });
+            ics += 'END:VCALENDAR';
+            const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' })); a.download = `lessons_${y}${String(m + 1).padStart(2, '0')}.ics`; a.click();
+        }
 
-    function attachEventListeners() {
-      document.querySelectorAll('[ondragover]').forEach(el => {
-        el.addEventListener('dragleave', (e) => e.currentTarget.classList.remove('drag-over'));
-      });
-    }
+        function attachEventListeners() { document.querySelectorAll('[ondragover]').forEach(el => el.addEventListener('dragleave', e => e.currentTarget.classList.remove('drag-over'))); }
 
-    // Initialize
-    render();
-  </script>
+        // Initialize
+        if (state.config) startSync();
+        render();
+    </script>
 </body>
+
 </html>
