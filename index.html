@@ -60,11 +60,6 @@
             background-color: rgba(217, 119, 6, 0.2);
         }
 
-        .selected-lesson {
-            outline: 3px solid #d97706;
-            outline-offset: 1px;
-        }
-
         .copy-mode-banner {
             position: fixed;
             top: 70px;
@@ -91,10 +86,6 @@
             cursor: grabbing;
         }
 
-        .holiday {
-            color: #dc2626;
-        }
-
         .sync-indicator {
             animation: pulse 2s infinite;
         }
@@ -110,20 +101,6 @@
                 opacity: 0.5;
             }
         }
-
-        .touch-dragging {
-            position: fixed;
-            z-index: 9999;
-            pointer-events: none;
-            opacity: 0.8;
-            transform: scale(1.05);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-        }
-
-        .touch-drop-target {
-            background-color: rgba(217, 119, 6, 0.3) !important;
-            border: 2px dashed #d97706 !important;
-        }
     </style>
 </head>
 
@@ -131,755 +108,845 @@
     <div id="app"></div>
 
     <script>
-        // JSONBin.io Configuration
-        const JSONBIN_API = 'https://api.jsonbin.io/v3/b';
-
-        // State
-        const state = {
-            mode: null,
-            currentDate: new Date(),
-            lessons: [],
-            students: [],
-            searchName: '',
-            dragData: null,
-            showRoster: true,
-            syncing: false,
-            pendingSync: false, // ローカル変更のクラウド同期待ち
-            lastSync: null,
-            config: JSON.parse(localStorage.getItem('calendarConfig') || 'null'),
-            // 選択モード用
-            selectMode: null, // 'copy', 'move', 'addFromRoster'
-            selectedLessonId: null,
-            selectedStudentId: null
+        // ============================================================
+        // Config Module - 設定・定数の一元管理
+        // ============================================================
+        const Config = {
+            API_URL: 'https://api.jsonbin.io/v3/b',
+            SYNC_INTERVAL: 5000,
+            TEACHER_PASSWORD: '0927',
+            TIME_RANGE: { start: 9, end: 21, step: 30 },
+            STORAGE_KEY: 'calendarConfig'
         };
 
-        // Japanese Holidays
-        const holidays = {
-            '2024-01-01': '元日', '2024-01-08': '成人の日', '2024-02-11': '建国記念の日', '2024-02-12': '振替休日',
-            '2024-02-23': '天皇誕生日', '2024-03-20': '春分の日', '2024-04-29': '昭和の日', '2024-05-03': '憲法記念日',
-            '2024-05-04': 'みどりの日', '2024-05-05': 'こどもの日', '2024-05-06': '振替休日', '2024-07-15': '海の日',
-            '2024-08-11': '山の日', '2024-08-12': '振替休日', '2024-09-16': '敬老の日', '2024-09-22': '秋分の日',
-            '2024-09-23': '振替休日', '2024-10-14': 'スポーツの日', '2024-11-03': '文化の日', '2024-11-04': '振替休日',
-            '2024-11-23': '勤労感謝の日', '2025-01-01': '元日', '2025-01-13': '成人の日', '2025-02-11': '建国記念の日',
-            '2025-02-23': '天皇誕生日', '2025-02-24': '振替休日', '2025-03-20': '春分の日', '2025-04-29': '昭和の日',
-            '2025-05-03': '憲法記念日', '2025-05-04': 'みどりの日', '2025-05-05': 'こどもの日', '2025-05-06': '振替休日',
-            '2025-07-21': '海の日', '2025-08-11': '山の日', '2025-09-15': '敬老の日', '2025-09-23': '秋分の日',
-            '2025-10-13': 'スポーツの日', '2025-11-03': '文化の日', '2025-11-23': '勤労感謝の日', '2025-11-24': '振替休日',
-            '2026-01-01': '元日', '2026-01-12': '成人の日', '2026-02-11': '建国記念の日', '2026-02-23': '天皇誕生日',
-            '2026-03-20': '春分の日', '2026-04-29': '昭和の日', '2026-05-03': '憲法記念日', '2026-05-04': 'みどりの日',
-            '2026-05-05': 'こどもの日', '2026-05-06': '振替休日', '2026-07-20': '海の日', '2026-08-11': '山の日',
-            '2026-09-21': '敬老の日', '2026-09-22': '国民の休日', '2026-09-23': '秋分の日', '2026-10-12': 'スポーツの日',
-            '2026-11-03': '文化の日', '2026-11-23': '勤労感謝の日', '2027-01-01': '元日', '2027-01-11': '成人の日',
-            '2027-02-11': '建国記念の日', '2027-02-23': '天皇誕生日', '2027-03-21': '春分の日', '2027-03-22': '振替休日',
-            '2027-04-29': '昭和の日', '2027-05-03': '憲法記念日', '2027-05-04': 'みどりの日', '2027-05-05': 'こどもの日',
-            '2027-07-19': '海の日', '2027-08-11': '山の日', '2027-09-20': '敬老の日', '2027-09-23': '秋分の日',
-            '2027-10-11': 'スポーツの日', '2027-11-03': '文化の日', '2027-11-23': '勤労感謝の日'
-        };
+        // ============================================================
+        // Utils Module - ユーティリティ関数（キャッシュ付き）
+        // ============================================================
+        const Utils = {
+            formatDate: (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
 
-        // Utility functions
-        const formatDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-        const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2);
-        const timeOptions = () => { const opts = []; for (let h = 9; h <= 21; h++) for (let m = 0; m < 60; m += 30) opts.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`); return opts; };
-        const addHour = (t) => { const [h, m] = t.split(':').map(Number); return `${String(h + 1).padStart(2, '0')}:${String(m).padStart(2, '0')}`; };
+            generateId: () => Date.now().toString(36) + Math.random().toString(36).substr(2),
 
-        // JSONBin.io API functions
-        async function createBin(apiKey, data) {
-            const res = await fetch(JSONBIN_API, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Master-Key': apiKey, 'X-Bin-Private': 'false' },
-                body: JSON.stringify(data)
-            });
-            const json = await res.json();
-            if (!res.ok) throw new Error(json.message || 'Bin作成に失敗しました');
-            return json.metadata.id;
-        }
+            addHour: (t) => {
+                const [h, m] = t.split(':').map(Number);
+                return `${String(h + 1).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+            },
 
-        async function updateBin(binId, data) {
-            await fetch(`${JSONBIN_API}/${binId}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json', 'X-Master-Key': state.config.apiKey },
-                body: JSON.stringify(data)
-            });
-        }
-
-        async function readBin(binId) {
-            const res = await fetch(`${JSONBIN_API}/${binId}/latest`, {
-                headers: { 'X-Master-Key': state.config.apiKey }
-            });
-            const json = await res.json();
-            return json.record;
-        }
-
-        async function syncToCloud() {
-            if (!state.config || state.syncing) return;
-            state.syncing = true;
-            state.pendingSync = true; // ローカル変更をマーク
-            try {
-                await updateBin(state.config.binId, { lessons: state.lessons, students: state.students, updatedAt: Date.now() });
-                state.lastSync = new Date();
-                state.pendingSync = false; // 同期完了
-            } catch (e) {
-                console.error('Sync error:', e);
-                state.pendingSync = false;
-            }
-            state.syncing = false;
-            render();
-        }
-
-        async function syncFromCloud() {
-            if (!state.config || state.syncing || state.pendingSync) return; // ローカル変更中はスキップ
-            try {
-                const data = await readBin(state.config.binId);
-                if (data && !state.pendingSync) { // 再度チェック
-                    state.lessons = data.lessons || [];
-                    state.students = data.students || [];
-                    state.lastSync = new Date();
-                    // 入力中はフルレンダーしない（フォーカスが失われるため）
-                    const activeEl = document.activeElement;
-                    if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'SELECT' || activeEl.tagName === 'TEXTAREA')) {
-                        renderCalendarOnly();
-                        updateRosterOnly();
-                    } else {
-                        render();
+            // キャッシュされた時間オプション
+            _timeOptionsCache: null,
+            getTimeOptions() {
+                if (!this._timeOptionsCache) {
+                    this._timeOptionsCache = [];
+                    for (let h = Config.TIME_RANGE.start; h <= Config.TIME_RANGE.end; h++) {
+                        for (let m = 0; m < 60; m += Config.TIME_RANGE.step) {
+                            this._timeOptionsCache.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+                        }
                     }
                 }
-            } catch (e) { console.error('Fetch error:', e); }
-        }
+                return this._timeOptionsCache;
+            },
 
-        function updateRosterOnly() {
-            const rosterPanel = document.getElementById('rosterPanel');
-            if (rosterPanel && state.mode === 'teacher') {
-                rosterPanel.innerHTML = renderRoster();
-            }
-        }
-
-        // Auto-sync every 5 seconds
-        let syncInterval;
-        function startSync() {
-            if (syncInterval) clearInterval(syncInterval);
-            syncFromCloud();
-            syncInterval = setInterval(syncFromCloud, 5000);
-        }
-
-        // Get calendar days
-        function getCalendarDays(year, month) {
-            const first = new Date(year, month, 1);
-            const last = new Date(year, month + 1, 0);
-            const days = [];
-            const startDay = first.getDay();
-            for (let i = startDay - 1; i >= 0; i--) days.push({ date: new Date(year, month, -i), current: false });
-            for (let i = 1; i <= last.getDate(); i++) days.push({ date: new Date(year, month, i), current: true });
-            const remaining = 42 - days.length;
-            for (let i = 1; i <= remaining; i++) days.push({ date: new Date(year, month + 1, i), current: false });
-            return days;
-        }
-
-        // Render functions
-        function render() {
-            const app = document.getElementById('app');
-            if (!state.config) { app.innerHTML = renderSetup(); return; }
-            if (!state.mode) { app.innerHTML = renderLogin(); return; }
-            app.innerHTML = `
-        <header class="bg-gradient-to-r from-wood-600 to-wood-700 text-white p-4 shadow-lg sticky top-0 z-40">
-          <div class="max-w-7xl mx-auto flex justify-between items-center flex-wrap gap-2">
-            <h1 class="text-xl md:text-2xl font-bold flex items-center gap-2">
-              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/></svg>
-              レッスンスケジュール
-            </h1>
-            <div class="flex items-center gap-2 flex-wrap">
-              <span class="text-xs ${state.syncing ? 'sync-indicator' : ''}">${state.lastSync ? '✓ 同期済' : '同期中...'}</span>
-              ${state.mode === 'student' ? `<input type="text" id="searchInput" placeholder="名前で検索" value="${state.searchName}" oninput="state.searchName = this.value; renderCalendarOnly();" class="px-3 py-1 rounded text-gray-800 text-sm w-32">` : ''}
-              <span class="text-sm bg-wood-500 px-2 py-1 rounded">${state.mode === 'teacher' ? '先生用' : 'レッスン生用'}</span>
-              <button onclick="logout()" class="bg-wood-800 hover:bg-wood-900 px-3 py-1 rounded text-sm">ログアウト</button>
-            </div>
-          </div>
-        </header>
-        <main class="max-w-7xl mx-auto p-2 md:p-4">
-          ${state.mode === 'teacher' ? renderTeacherView() : renderStudentView()}
-        </main>
-      `;
-            attachEventListeners();
-        }
-
-        function renderSetup() {
-            return `
-        <div class="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-wood-100 to-wood-200">
-          <div class="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
-            <div class="text-center mb-6">
-              <div class="w-16 h-16 bg-wood-500 rounded-full flex items-center justify-center mx-auto mb-4">
-                <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
-              </div>
-              <h1 class="text-2xl font-bold text-wood-800">初期設定</h1>
-              <p class="text-wood-600 mt-2 text-sm">クラウド同期の設定を行います</p>
-            </div>
-            <div class="space-y-4">
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">JSONBin.io APIキー</label>
-                <input type="text" id="apiKey" placeholder="$2a$10$..." class="w-full px-4 py-3 border border-wood-300 rounded-lg focus:ring-2 focus:ring-wood-500">
-                <p class="text-xs text-gray-500 mt-1">jsonbin.io のX-Master-Keyを入力</p>
-              </div>
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Bin ID（既存データがある場合）</label>
-                <input type="text" id="binId" placeholder="省略可能" class="w-full px-4 py-3 border border-wood-300 rounded-lg focus:ring-2 focus:ring-wood-500">
-                <p class="text-xs text-gray-500 mt-1">他のデバイスと同期する場合に入力</p>
-              </div>
-              <button onclick="setupConfig()" class="w-full bg-wood-600 hover:bg-wood-700 text-white py-3 rounded-lg font-semibold transition">設定を保存</button>
-            </div>
-          </div>
-        </div>
-      `;
-        }
-
-        async function setupConfig() {
-            const apiKey = document.getElementById('apiKey').value.trim();
-            let binId = document.getElementById('binId').value.trim();
-            if (!apiKey) { alert('APIキーを入力してください'); return; }
-            try {
-                if (!binId) {
-                    binId = await createBin(apiKey, { lessons: [], students: [], updatedAt: Date.now() });
-                    alert('新しいBinを作成しました。\n他のデバイスで同期するには以下のBin IDを使用してください:\n\n' + binId);
+            // 祝日Map（O(1)ルックアップ）
+            _holidayMap: null,
+            getHolidayMap() {
+                if (!this._holidayMap) {
+                    this._holidayMap = new Map([
+                        ['2024-01-01', '元日'], ['2024-01-08', '成人の日'], ['2024-02-11', '建国記念の日'], ['2024-02-12', '振替休日'],
+                        ['2024-02-23', '天皇誕生日'], ['2024-03-20', '春分の日'], ['2024-04-29', '昭和の日'], ['2024-05-03', '憲法記念日'],
+                        ['2024-05-04', 'みどりの日'], ['2024-05-05', 'こどもの日'], ['2024-05-06', '振替休日'], ['2024-07-15', '海の日'],
+                        ['2024-08-11', '山の日'], ['2024-08-12', '振替休日'], ['2024-09-16', '敬老の日'], ['2024-09-22', '秋分の日'],
+                        ['2024-09-23', '振替休日'], ['2024-10-14', 'スポーツの日'], ['2024-11-03', '文化の日'], ['2024-11-04', '振替休日'],
+                        ['2024-11-23', '勤労感謝の日'], ['2025-01-01', '元日'], ['2025-01-13', '成人の日'], ['2025-02-11', '建国記念の日'],
+                        ['2025-02-23', '天皇誕生日'], ['2025-02-24', '振替休日'], ['2025-03-20', '春分の日'], ['2025-04-29', '昭和の日'],
+                        ['2025-05-03', '憲法記念日'], ['2025-05-04', 'みどりの日'], ['2025-05-05', 'こどもの日'], ['2025-05-06', '振替休日'],
+                        ['2025-07-21', '海の日'], ['2025-08-11', '山の日'], ['2025-09-15', '敬老の日'], ['2025-09-23', '秋分の日'],
+                        ['2025-10-13', 'スポーツの日'], ['2025-11-03', '文化の日'], ['2025-11-23', '勤労感謝の日'], ['2025-11-24', '振替休日'],
+                        ['2026-01-01', '元日'], ['2026-01-12', '成人の日'], ['2026-02-11', '建国記念の日'], ['2026-02-23', '天皇誕生日'],
+                        ['2026-03-20', '春分の日'], ['2026-04-29', '昭和の日'], ['2026-05-03', '憲法記念日'], ['2026-05-04', 'みどりの日'],
+                        ['2026-05-05', 'こどもの日'], ['2026-05-06', '振替休日'], ['2026-07-20', '海の日'], ['2026-08-11', '山の日'],
+                        ['2026-09-21', '敬老の日'], ['2026-09-22', '国民の休日'], ['2026-09-23', '秋分の日'], ['2026-10-12', 'スポーツの日'],
+                        ['2026-11-03', '文化の日'], ['2026-11-23', '勤労感謝の日'], ['2027-01-01', '元日'], ['2027-01-11', '成人の日'],
+                        ['2027-02-11', '建国記念の日'], ['2027-02-23', '天皇誕生日'], ['2027-03-21', '春分の日'], ['2027-03-22', '振替休日'],
+                        ['2027-04-29', '昭和の日'], ['2027-05-03', '憲法記念日'], ['2027-05-04', 'みどりの日'], ['2027-05-05', 'こどもの日'],
+                        ['2027-07-19', '海の日'], ['2027-08-11', '山の日'], ['2027-09-20', '敬老の日'], ['2027-09-23', '秋分の日'],
+                        ['2027-10-11', 'スポーツの日'], ['2027-11-03', '文化の日'], ['2027-11-23', '勤労感謝の日']
+                    ]);
                 }
-                state.config = { apiKey, binId };
-                localStorage.setItem('calendarConfig', JSON.stringify(state.config));
-                startSync();
-                render();
-            } catch (e) { alert('エラーが発生しました: ' + e.message); }
-        }
+                return this._holidayMap;
+            },
 
-        function renderLogin() {
-            return `
-        <div class="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-wood-100 to-wood-200">
-          <div class="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
-            <div class="text-center mb-8">
-              <div class="w-20 h-20 bg-wood-500 rounded-full flex items-center justify-center mx-auto mb-4">
-                <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/></svg>
-              </div>
-              <h1 class="text-2xl font-bold text-wood-800">レッスンスケジュール</h1>
-              <p class="text-wood-600 mt-2">ギターレッスン予約管理</p>
-              <p class="text-xs text-gray-500 mt-1">Bin ID: ${state.config.binId}</p>
-            </div>
-            <div class="space-y-4">
-              <button onclick="enterStudent()" class="w-full bg-wood-500 hover:bg-wood-600 text-white py-3 rounded-lg font-semibold transition">レッスン生として入る</button>
-              <div class="relative"><div class="absolute inset-0 flex items-center"><div class="w-full border-t border-gray-300"></div></div><div class="relative flex justify-center text-sm"><span class="px-2 bg-white text-gray-500">または</span></div></div>
-              <div>
-                <input type="password" id="teacherPass" placeholder="先生用パスワード(4桁)" maxlength="4" class="w-full px-4 py-3 border border-wood-300 rounded-lg focus:ring-2 focus:ring-wood-500 text-center text-xl tracking-widest">
-                <button onclick="enterTeacher()" class="w-full mt-3 bg-wood-700 hover:bg-wood-800 text-white py-3 rounded-lg font-semibold transition">先生として入る</button>
-              </div>
-              <button onclick="resetConfig()" class="w-full text-sm text-gray-500 hover:text-gray-700 mt-4">設定をリセット</button>
-            </div>
-          </div>
-        </div>
-      `;
-        }
+            getHoliday(dateStr) {
+                return this.getHolidayMap().get(dateStr);
+            },
 
-        function resetConfig() {
-            if (confirm('設定をリセットしますか？')) {
-                localStorage.removeItem('calendarConfig');
-                state.config = null;
-                render();
+            getCalendarDays(year, month) {
+                const first = new Date(year, month, 1);
+                const last = new Date(year, month + 1, 0);
+                const days = [];
+                const startDay = first.getDay();
+                for (let i = startDay - 1; i >= 0; i--) days.push({ date: new Date(year, month, -i), current: false });
+                for (let i = 1; i <= last.getDate(); i++) days.push({ date: new Date(year, month, i), current: true });
+                const remaining = 42 - days.length;
+                for (let i = 1; i <= remaining; i++) days.push({ date: new Date(year, month + 1, i), current: false });
+                return days;
             }
-        }
+        };
 
-        function renderTeacherView() {
-            return `
-        <div class="flex flex-col lg:flex-row gap-4">
-          <div class="flex-1">${renderCalendarHeader()}${renderCalendar(true)}</div>
-          <div class="lg:w-72 ${state.showRoster ? '' : 'hidden'}" id="rosterPanel">${renderRoster()}</div>
-        </div>
-        <button onclick="toggleRoster()" class="lg:hidden fixed bottom-4 right-4 bg-wood-600 text-white p-3 rounded-full shadow-lg z-50">
-          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"/></svg>
-        </button>
-      `;
-        }
+        // ============================================================
+        // StateManager Module - 状態管理
+        // ============================================================
+        const StateManager = {
+            state: {
+                mode: null,
+                currentDate: new Date(),
+                lessons: [],
+                students: [],
+                searchName: '',
+                dragData: null,
+                showRoster: true,
+                syncing: false,
+                pendingSync: false,
+                lastSync: null,
+                config: JSON.parse(localStorage.getItem(Config.STORAGE_KEY) || 'null'),
+                selectMode: null,
+                selectedLessonId: null,
+                selectedStudentId: null
+            },
 
-        function renderStudentView() {
-            return `${renderCalendarHeader()}${renderCalendar(false)}`;
-        }
+            saveConfig() {
+                localStorage.setItem(Config.STORAGE_KEY, JSON.stringify(this.state.config));
+            },
 
-        function renderCalendarHeader() {
-            const y = state.currentDate.getFullYear(), m = state.currentDate.getMonth();
-            return `
-        <div class="bg-white rounded-lg shadow p-3 mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div class="flex items-center gap-2">
-            <button onclick="prevMonth()" class="p-2 hover:bg-wood-100 rounded-lg"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg></button>
-            <span class="text-lg font-bold text-wood-800">${y}年${m + 1}月</span>
-            <button onclick="nextMonth()" class="p-2 hover:bg-wood-100 rounded-lg"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg></button>
-          </div>
-          <div class="flex gap-2">
-            <button onclick="goToday()" class="bg-wood-100 hover:bg-wood-200 px-3 py-1 rounded text-sm text-wood-800">今日</button>
-            ${state.mode === 'teacher' ? `<button onclick="exportToGoogle()" class="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-sm">📅 Googleカレンダー</button>` : ''}
-          </div>
-        </div>
-      `;
-        }
+            resetConfig() {
+                localStorage.removeItem(Config.STORAGE_KEY);
+                this.state.config = null;
+            },
 
-        function renderCalendar(isTeacher) {
-            const y = state.currentDate.getFullYear(), m = state.currentDate.getMonth();
-            const days = getCalendarDays(y, m);
-            const today = formatDate(new Date());
-            const weekdays = ['日', '月', '火', '水', '木', '金', '土'];
-            let lessons = state.lessons;
-            if (!isTeacher && state.searchName) lessons = lessons.filter(l => l.isShared || l.studentName.includes(state.searchName));
-            else if (!isTeacher) lessons = lessons.filter(l => l.isShared);
+            findLesson(id) {
+                return this.state.lessons.find(l => l.id === id);
+            },
 
-            return `
-        <div class="bg-white rounded-lg shadow overflow-hidden">
-          <div class="grid grid-cols-7 bg-wood-100">${weekdays.map((d, i) => `<div class="p-2 text-center font-bold text-sm ${i === 0 ? 'text-red-500' : i === 6 ? 'text-blue-500' : 'text-wood-800'}">${d}</div>`).join('')}</div>
-          <div class="grid grid-cols-7 border-t border-wood-200">
-            ${days.map(d => {
-                const dateStr = formatDate(d.date);
+            findStudent(id) {
+                return this.state.students.find(s => s.id === id);
+            },
+
+            addLesson(lesson) {
+                this.state.lessons.push(lesson);
+            },
+
+            updateLesson(id, data) {
+                const idx = this.state.lessons.findIndex(l => l.id === id);
+                if (idx !== -1) this.state.lessons[idx] = data;
+            },
+
+            deleteLesson(id) {
+                this.state.lessons = this.state.lessons.filter(l => l.id !== id);
+            },
+
+            addStudent(student) {
+                this.state.students.push(student);
+            },
+
+            updateStudent(id, data) {
+                const idx = this.state.students.findIndex(s => s.id === id);
+                if (idx !== -1) this.state.students[idx] = data;
+            },
+
+            deleteStudent(id) {
+                this.state.students = this.state.students.filter(s => s.id !== id);
+            },
+
+            getFilteredLessons(isTeacher) {
+                let lessons = this.state.lessons;
+                if (!isTeacher && this.state.searchName) {
+                    lessons = lessons.filter(l => l.isShared || l.studentName.includes(this.state.searchName));
+                } else if (!isTeacher) {
+                    lessons = lessons.filter(l => l.isShared);
+                }
+                return lessons;
+            }
+        };
+
+        // ============================================================
+        // CloudAPI Module - クラウド通信
+        // ============================================================
+        const CloudAPI = {
+            async createBin(apiKey, data) {
+                const res = await fetch(Config.API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Master-Key': apiKey, 'X-Bin-Private': 'false' },
+                    body: JSON.stringify(data)
+                });
+                const json = await res.json();
+                if (!res.ok) throw new Error(json.message || 'Bin作成に失敗しました');
+                return json.metadata.id;
+            },
+
+            async updateBin(data) {
+                const { config } = StateManager.state;
+                await fetch(`${Config.API_URL}/${config.binId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json', 'X-Master-Key': config.apiKey },
+                    body: JSON.stringify(data)
+                });
+            },
+
+            async readBin() {
+                const { config } = StateManager.state;
+                const res = await fetch(`${Config.API_URL}/${config.binId}/latest`, {
+                    headers: { 'X-Master-Key': config.apiKey }
+                });
+                const json = await res.json();
+                return json.record;
+            },
+
+            async syncToCloud() {
+                const s = StateManager.state;
+                if (!s.config || s.syncing) return;
+                s.syncing = true;
+                s.pendingSync = true;
+                try {
+                    await this.updateBin({ lessons: s.lessons, students: s.students, updatedAt: Date.now() });
+                    s.lastSync = new Date();
+                    s.pendingSync = false;
+                } catch (e) {
+                    console.error('Sync error:', e);
+                    s.pendingSync = false;
+                }
+                s.syncing = false;
+                App.render();
+            },
+
+            async syncFromCloud() {
+                const s = StateManager.state;
+                if (!s.config || s.syncing || s.pendingSync) return;
+                try {
+                    const data = await this.readBin();
+                    if (data && !s.pendingSync) {
+                        s.lessons = data.lessons || [];
+                        s.students = data.students || [];
+                        s.lastSync = new Date();
+                        const activeEl = document.activeElement;
+                        if (activeEl && ['INPUT', 'SELECT', 'TEXTAREA'].includes(activeEl.tagName)) {
+                            UIRenderer.updateCalendarOnly();
+                            UIRenderer.updateRosterOnly();
+                        } else {
+                            App.render();
+                        }
+                    }
+                } catch (e) { console.error('Fetch error:', e); }
+            }
+        };
+
+        // ============================================================
+        // FormBuilder Module - フォームテンプレート共通化
+        // ============================================================
+        const FormBuilder = {
+            timeSelect(name, selected = '', onChange = '') {
+                const options = Utils.getTimeOptions().map(t =>
+                    `<option value="${t}" ${t === selected ? 'selected' : ''}>${t}</option>`
+                ).join('');
+                return `<select name="${name}" ${onChange} class="w-full border rounded px-3 py-2">${options}</select>`;
+            },
+
+            lessonTypeSelect(name, selected = 'acoustic') {
+                return `<select name="${name}" class="w-full border rounded px-3 py-2">
+                <option value="acoustic" ${selected === 'acoustic' ? 'selected' : ''}>アコギ</option>
+                <option value="electric" ${selected === 'electric' ? 'selected' : ''}>エレキ</option>
+            </select>`;
+            },
+
+            lessonForm(lesson = null, date = '') {
+                const isEdit = !!lesson;
+                const l = lesson || { studentName: '', startTime: '09:00', endTime: '10:00', lessonType: 'acoustic', isShared: false };
+                const formDate = lesson ? lesson.date : date;
+                const formId = lesson ? lesson.id : 'null';
+
+                return `
+            <form onsubmit="App.saveLesson(event, ${isEdit ? `'${formId}'` : 'null'}, '${formDate}')">
+                <div class="space-y-4">
+                    <div><label class="block text-sm font-medium mb-1">レッスン生名</label>
+                        <input type="text" name="studentName" value="${l.studentName}" required class="w-full border rounded px-3 py-2"></div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div><label class="block text-sm font-medium mb-1">開始時間</label>
+                            ${this.timeSelect('startTime', l.startTime, 'onchange="App.autoEndTime(this)"')}</div>
+                        <div><label class="block text-sm font-medium mb-1">終了時間</label>
+                            ${this.timeSelect('endTime', l.endTime)}</div>
+                    </div>
+                    <div><label class="block text-sm font-medium mb-1">レッスンタイプ</label>
+                        ${this.lessonTypeSelect('lessonType', l.lessonType)}</div>
+                    <div class="flex items-center gap-2">
+                        <input type="checkbox" name="isShared" id="isShared${isEdit ? 'Edit' : ''}" ${l.isShared ? 'checked' : ''}>
+                        <label for="isShared${isEdit ? 'Edit' : ''}" class="text-sm">共有イベント（全員に表示）</label>
+                    </div>
+                </div>
+                ${isEdit ? `
+                <div class="mt-4 p-3 bg-wood-50 rounded-lg">
+                    <p class="text-sm text-wood-700 mb-2">📅 別の日に移動・コピー</p>
+                    <div class="flex gap-2">
+                        <button type="button" onclick="SelectMode.start('copy', '${l.id}')" class="flex-1 px-3 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm">コピー</button>
+                        <button type="button" onclick="SelectMode.start('move', '${l.id}')" class="flex-1 px-3 py-2 bg-green-500 text-white rounded hover:bg-green-600 text-sm">移動</button>
+                    </div>
+                </div>` : ''}
+                <div class="mt-4 flex gap-2 justify-end">
+                    ${isEdit ? `<button type="button" onclick="App.deleteLesson('${l.id}')" class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600">削除</button>` : ''}
+                    <button type="button" onclick="ModalManager.close()" class="px-4 py-2 border rounded hover:bg-gray-100">キャンセル</button>
+                    <button type="submit" class="px-4 py-2 bg-wood-500 text-white rounded hover:bg-wood-600">保存</button>
+                </div>
+            </form>`;
+            },
+
+            studentForm(student = null) {
+                const isEdit = !!student;
+                const s = student || { name: '', defaultTime: '09:00', lessonType: 'acoustic' };
+                const formId = student ? student.id : 'null';
+
+                return `
+            <form onsubmit="App.saveStudent(event, ${isEdit ? `'${formId}'` : 'null'})">
+                <div class="space-y-4">
+                    <div><label class="block text-sm font-medium mb-1">名前</label>
+                        <input type="text" name="name" value="${s.name}" required class="w-full border rounded px-3 py-2"></div>
+                    <div><label class="block text-sm font-medium mb-1">デフォルト時間</label>
+                        ${this.timeSelect('defaultTime', s.defaultTime)}</div>
+                    <div><label class="block text-sm font-medium mb-1">レッスンタイプ</label>
+                        ${this.lessonTypeSelect('lessonType', s.lessonType)}</div>
+                </div>
+                <div class="mt-6 flex gap-2 justify-end">
+                    <button type="button" onclick="ModalManager.close()" class="px-4 py-2 border rounded hover:bg-gray-100">キャンセル</button>
+                    <button type="submit" class="px-4 py-2 bg-wood-500 text-white rounded hover:bg-wood-600">保存</button>
+                </div>
+            </form>`;
+            }
+        };
+
+        // ============================================================
+        // ModalManager Module - モーダル管理
+        // ============================================================
+        const ModalManager = {
+            show(title, content) {
+                const html = `
+            <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onclick="ModalManager.close(event)">
+                <div class="bg-white rounded-lg p-6 w-full max-w-md" onclick="event.stopPropagation()">
+                    <h2 class="text-xl font-bold mb-4 text-wood-800">${title}</h2>
+                    ${content}
+                </div>
+            </div>`;
+                document.body.insertAdjacentHTML('beforeend', html);
+            },
+
+            close(e) {
+                if (e && e.target !== e.currentTarget) return;
+                document.querySelector('.fixed.inset-0')?.remove();
+            }
+        };
+
+        // ============================================================
+        // SelectMode Module - 選択モード（モバイル用コピー/移動）
+        // ============================================================
+        const SelectMode = {
+            start(mode, lessonId) {
+                StateManager.state.selectMode = mode;
+                StateManager.state.selectedLessonId = lessonId;
+                ModalManager.close();
+                App.render();
+                this.showBanner();
+            },
+
+            startFromRoster(studentId) {
+                StateManager.state.selectMode = 'addFromRoster';
+                StateManager.state.selectedStudentId = studentId;
+                App.render();
+                this.showBanner();
+            },
+
+            showBanner() {
+                document.querySelector('.copy-mode-banner')?.remove();
+                const messages = {
+                    copy: '📅 日付をタップしてコピー先を選択',
+                    move: '📅 日付をタップして移動先を選択',
+                    addFromRoster: '📅 日付をタップして予定を作成'
+                };
+                const banner = document.createElement('div');
+                banner.className = 'copy-mode-banner';
+                banner.innerHTML = `${messages[StateManager.state.selectMode]} <button onclick="SelectMode.cancel()" style="margin-left:8px; background:rgba(255,255,255,0.2); padding:2px 8px; border-radius:10px;">✕ キャンセル</button>`;
+                document.body.appendChild(banner);
+                document.getElementById('app').classList.add('select-mode');
+            },
+
+            cancel() {
+                StateManager.state.selectMode = null;
+                StateManager.state.selectedLessonId = null;
+                StateManager.state.selectedStudentId = null;
+                document.querySelector('.copy-mode-banner')?.remove();
+                document.getElementById('app').classList.remove('select-mode');
+                App.render();
+            },
+
+            execute(date) {
+                const s = StateManager.state;
+                if (s.selectMode === 'copy' && s.selectedLessonId) {
+                    const lesson = StateManager.findLesson(s.selectedLessonId);
+                    if (lesson) {
+                        StateManager.addLesson({ ...lesson, id: Utils.generateId(), date });
+                        CloudAPI.syncToCloud();
+                    }
+                } else if (s.selectMode === 'move' && s.selectedLessonId) {
+                    const lesson = StateManager.findLesson(s.selectedLessonId);
+                    if (lesson) {
+                        lesson.date = date;
+                        CloudAPI.syncToCloud();
+                    }
+                } else if (s.selectMode === 'addFromRoster' && s.selectedStudentId) {
+                    const student = StateManager.findStudent(s.selectedStudentId);
+                    if (student) {
+                        StateManager.addLesson({
+                            id: Utils.generateId(), date,
+                            studentName: student.name,
+                            startTime: student.defaultTime,
+                            endTime: Utils.addHour(student.defaultTime),
+                            lessonType: student.lessonType,
+                            isShared: false
+                        });
+                        CloudAPI.syncToCloud();
+                    }
+                }
+                this.cancel();
+            }
+        };
+
+        // ============================================================
+        // DragDrop Module - ドラッグ&ドロップ
+        // ============================================================
+        const DragDrop = {
+            handleStart(e, id) {
+                StateManager.state.dragData = { type: 'lesson', id };
+                e.dataTransfer.effectAllowed = 'copyMove';
+            },
+
+            handleStudentStart(e, id) {
+                StateManager.state.dragData = { type: 'student', id };
+                e.dataTransfer.effectAllowed = 'copy';
+                if (window.innerWidth < 1024) {
+                    StateManager.state.showRoster = false;
+                    App.render();
+                }
+            },
+
+            handleOver(e) {
+                e.preventDefault();
+                e.currentTarget.classList.add('drag-over');
+            },
+
+            handleDrop(e, date) {
+                e.preventDefault();
+                e.currentTarget.classList.remove('drag-over');
+                if (!StateManager.state.dragData) return;
+                this.executeDrop(date);
+            },
+
+            executeDrop(date) {
+                const d = StateManager.state.dragData;
+                if (!d) return;
+
+                if (d.type === 'lesson') {
+                    const mode = confirm('コピーしますか？\n（OKでコピー、キャンセルで移動）') ? 'copy' : 'move';
+                    const lesson = StateManager.findLesson(d.id);
+                    if (lesson) {
+                        if (mode === 'copy') StateManager.addLesson({ ...lesson, id: Utils.generateId(), date });
+                        else lesson.date = date;
+                        CloudAPI.syncToCloud();
+                        App.render();
+                    }
+                } else if (d.type === 'student') {
+                    const student = StateManager.findStudent(d.id);
+                    if (student) {
+                        StateManager.addLesson({
+                            id: Utils.generateId(), date,
+                            studentName: student.name,
+                            startTime: student.defaultTime,
+                            endTime: Utils.addHour(student.defaultTime),
+                            lessonType: student.lessonType,
+                            isShared: false
+                        });
+                        CloudAPI.syncToCloud();
+                        App.render();
+                    }
+                }
+                StateManager.state.dragData = null;
+            },
+
+            attachListeners() {
+                document.querySelectorAll('[ondragover]').forEach(el =>
+                    el.addEventListener('dragleave', e => e.currentTarget.classList.remove('drag-over'))
+                );
+            }
+        };
+
+        // ============================================================
+        // UIRenderer Module - UI描画
+        // ============================================================
+        const UIRenderer = {
+            buildCalendarCell(d, lessons, isTeacher, today) {
+                const dateStr = Utils.formatDate(d.date);
                 const dayLessons = lessons.filter(l => l.date === dateStr).sort((a, b) => a.startTime.localeCompare(b.startTime));
                 const isToday = dateStr === today;
-                const isHoliday = holidays[dateStr];
+                const isHoliday = Utils.getHoliday(dateStr);
                 const isSunday = d.date.getDay() === 0;
                 const isSaturday = d.date.getDay() === 6;
+
+                const lessonsHtml = dayLessons.map(l => `
+                <div class="lesson-item p-1 rounded text-white ${l.isShared ? 'bg-shared-500' : l.lessonType === 'acoustic' ? 'bg-acoustic-500' : 'bg-electric-500'}" 
+                     data-lesson-id="${l.id}" draggable="${isTeacher}" ondragstart="DragDrop.handleStart(event, '${l.id}')" ${isTeacher ? `onclick="event.stopPropagation(); App.openEditLesson('${l.id}')"` : ''}>
+                    ${l.isShared ? '☆ ' : ''}${l.startTime} ${l.studentName}
+                </div>
+            `).join('');
+
                 return `
-                <div class="calendar-cell border-b border-r border-wood-100 p-1 ${d.current ? 'bg-white' : 'bg-gray-50'} ${isTeacher ? 'cursor-pointer hover:bg-wood-50' : ''}" 
-                     data-date="${dateStr}" ondragover="handleDragOver(event)" ondrop="handleDrop(event, '${dateStr}')" ${isTeacher ? `onclick="handleCalendarCellClick('${dateStr}', true)"` : ''}>
-                  <div class="flex items-center justify-between mb-1">
+            <div class="calendar-cell border-b border-r border-wood-100 p-1 ${d.current ? 'bg-white' : 'bg-gray-50'} ${isTeacher ? 'cursor-pointer hover:bg-wood-50' : ''}" 
+                 data-date="${dateStr}" ondragover="DragDrop.handleOver(event)" ondrop="DragDrop.handleDrop(event, '${dateStr}')" ${isTeacher ? `onclick="App.handleCellClick('${dateStr}')"` : ''}>
+                <div class="flex items-center justify-between mb-1">
                     <span class="text-xs md:text-sm font-semibold ${isToday ? 'bg-wood-500 text-white rounded-full w-6 h-6 flex items-center justify-center' : ''} ${isSunday || isHoliday ? 'text-red-500' : isSaturday ? 'text-blue-500' : ''}">${d.date.getDate()}</span>
                     ${isHoliday ? `<span class="text-[9px] text-red-500 truncate hidden md:block">${isHoliday}</span>` : ''}
-                  </div>
-                  <div class="space-y-1">${dayLessons.map(l => `
-                    <div class="lesson-item p-1 rounded text-white ${l.isShared ? 'bg-shared-500' : l.lessonType === 'acoustic' ? 'bg-acoustic-500' : 'bg-electric-500'}" 
-                         data-lesson-id="${l.id}" draggable="${isTeacher}" ondragstart="handleDragStart(event, '${l.id}')" ${isTeacher ? `onclick="event.stopPropagation(); openEditLesson('${l.id}')"` : ''}>
-                      ${l.isShared ? '☆ ' : ''}${l.startTime} ${l.studentName}
-                    </div>
-                  `).join('')}</div>
                 </div>
-              `;
-            }).join('')}
-          </div>
-        </div>
-      `;
-        }
+                <div class="space-y-1">${lessonsHtml}</div>
+            </div>`;
+            },
 
-        function renderRoster() {
-            return `
-        <div class="bg-white rounded-lg shadow p-3">
-          <div class="flex items-center justify-between mb-3">
-            <h3 class="font-bold text-wood-800">レッスン生名簿</h3>
-            <button onclick="openAddStudent()" class="bg-wood-500 hover:bg-wood-600 text-white px-2 py-1 rounded text-sm">+ 追加</button>
-          </div>
-          <div class="space-y-2 max-h-96 overflow-y-auto">
-            ${state.students.map(s => `
-              <div class="student-card p-2 rounded border ${s.lessonType === 'acoustic' ? 'bg-acoustic-100 border-acoustic-300' : 'bg-electric-100 border-electric-300'}" 
-                   data-student-id="${s.id}" draggable="true" ondragstart="handleStudentDragStart(event, '${s.id}')">
-                <div class="flex items-center justify-between">
-                  <div><div class="font-medium text-sm">${s.name}</div><div class="text-xs text-gray-600">${s.defaultTime} / ${s.lessonType === 'acoustic' ? 'アコギ' : 'エレキ'}</div></div>
-                  <div class="flex gap-1 items-center">
-                    <button onclick="startAddFromRosterMode('${s.id}')" class="text-xs bg-wood-500 text-white px-2 py-1 rounded hover:bg-wood-600">📅+</button>
-                    <button onclick="editStudent('${s.id}')" class="text-xs text-wood-600 hover:text-wood-800">編集</button>
-                    <button onclick="deleteStudent('${s.id}')" class="text-xs text-red-500 hover:text-red-700">削除</button>
-                  </div>
+            calendar(isTeacher) {
+                const s = StateManager.state;
+                const y = s.currentDate.getFullYear(), m = s.currentDate.getMonth();
+                const days = Utils.getCalendarDays(y, m);
+                const today = Utils.formatDate(new Date());
+                const weekdays = ['日', '月', '火', '水', '木', '金', '土'];
+                const lessons = StateManager.getFilteredLessons(isTeacher);
+
+                const weekdaysHtml = weekdays.map((d, i) =>
+                    `<div class="p-2 text-center font-bold text-sm ${i === 0 ? 'text-red-500' : i === 6 ? 'text-blue-500' : 'text-wood-800'}">${d}</div>`
+                ).join('');
+
+                const cellsHtml = days.map(d => this.buildCalendarCell(d, lessons, isTeacher, today)).join('');
+
+                return `
+            <div class="bg-white rounded-lg shadow overflow-hidden">
+                <div class="grid grid-cols-7 bg-wood-100">${weekdaysHtml}</div>
+                <div class="grid grid-cols-7 border-t border-wood-200">${cellsHtml}</div>
+            </div>`;
+            },
+
+            calendarHeader() {
+                const s = StateManager.state;
+                const y = s.currentDate.getFullYear(), m = s.currentDate.getMonth();
+                return `
+            <div class="bg-white rounded-lg shadow p-3 mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                    <button onclick="App.prevMonth()" class="p-2 hover:bg-wood-100 rounded-lg"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg></button>
+                    <span class="text-lg font-bold text-wood-800">${y}年${m + 1}月</span>
+                    <button onclick="App.nextMonth()" class="p-2 hover:bg-wood-100 rounded-lg"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg></button>
                 </div>
-              </div>
-            `).join('')}
-            ${state.students.length === 0 ? '<p class="text-sm text-gray-500 text-center py-4">まだ生徒が登録されていません</p>' : ''}
-          </div>
-        </div>
-      `;
-        }
-
-        // Event handlers
-        function enterStudent() { state.mode = 'student'; render(); }
-        function enterTeacher() {
-            if (document.getElementById('teacherPass').value === '0927') { state.mode = 'teacher'; render(); }
-            else alert('パスワードが違います');
-        }
-        function logout() { state.mode = null; state.searchName = ''; render(); }
-        function updateSearch(v) { state.searchName = v; render(); }
-        function renderCalendarOnly() {
-            const calendarContainer = document.querySelector('.grid.grid-cols-7.border-t');
-            if (calendarContainer) {
-                const y = state.currentDate.getFullYear(), m = state.currentDate.getMonth();
-                const days = getCalendarDays(y, m);
-                const today = formatDate(new Date());
-                let lessons = state.lessons;
-                if (state.mode === 'student' && state.searchName) lessons = lessons.filter(l => l.isShared || l.studentName.includes(state.searchName));
-                else if (state.mode === 'student') lessons = lessons.filter(l => l.isShared);
-                calendarContainer.innerHTML = days.map(d => {
-                    const dateStr = formatDate(d.date);
-                    const dayLessons = lessons.filter(l => l.date === dateStr).sort((a, b) => a.startTime.localeCompare(b.startTime));
-                    const isToday = dateStr === today;
-                    const isHoliday = holidays[dateStr];
-                    const isSunday = d.date.getDay() === 0;
-                    const isSaturday = d.date.getDay() === 6;
-                    return `<div class="calendar-cell border-b border-r border-wood-100 p-1 ${d.current ? 'bg-white' : 'bg-gray-50'}" data-date="${dateStr}">
-                        <div class="flex items-center justify-between mb-1">
-                            <span class="text-xs md:text-sm font-semibold ${isToday ? 'bg-wood-500 text-white rounded-full w-6 h-6 flex items-center justify-center' : ''} ${isSunday || isHoliday ? 'text-red-500' : isSaturday ? 'text-blue-500' : ''}">${d.date.getDate()}</span>
-                            ${isHoliday ? `<span class="text-[9px] text-red-500 truncate hidden md:block">${isHoliday}</span>` : ''}
-                        </div>
-                        <div class="space-y-1">${dayLessons.map(l => `<div class="lesson-item p-1 rounded text-white ${l.isShared ? 'bg-shared-500' : l.lessonType === 'acoustic' ? 'bg-acoustic-500' : 'bg-electric-500'}">${l.isShared ? '☆ ' : ''}${l.startTime} ${l.studentName}</div>`).join('')}</div>
-                    </div>`;
-                }).join('');
-            }
-        }
-        function prevMonth() { state.currentDate.setMonth(state.currentDate.getMonth() - 1); render(); }
-        function nextMonth() { state.currentDate.setMonth(state.currentDate.getMonth() + 1); render(); }
-        function goToday() { state.currentDate = new Date(); render(); }
-        function toggleRoster() { state.showRoster = !state.showRoster; render(); }
-
-        // Drag and drop (PC)
-        function handleDragStart(e, id) { state.dragData = { type: 'lesson', id }; e.dataTransfer.effectAllowed = 'copyMove'; }
-        function handleStudentDragStart(e, id) { state.dragData = { type: 'student', id }; e.dataTransfer.effectAllowed = 'copy'; if (window.innerWidth < 1024) { state.showRoster = false; render(); } }
-        function handleDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }
-        function handleDrop(e, date) {
-            e.preventDefault(); e.currentTarget.classList.remove('drag-over');
-            if (!state.dragData) return;
-            executeDrop(date);
-        }
-
-        function executeDrop(date) {
-            if (!state.dragData) return;
-            if (state.dragData.type === 'lesson') {
-                const mode = confirm('コピーしますか？\n（OKでコピー、キャンセルで移動）') ? 'copy' : 'move';
-                const lesson = state.lessons.find(l => l.id === state.dragData.id);
-                if (lesson) {
-                    if (mode === 'copy') state.lessons.push({ ...lesson, id: generateId(), date });
-                    else lesson.date = date;
-                    syncToCloud(); render();
-                }
-            } else if (state.dragData.type === 'student') {
-                const student = state.students.find(s => s.id === state.dragData.id);
-                if (student) {
-                    state.lessons.push({ id: generateId(), date, studentName: student.name, startTime: student.defaultTime, endTime: addHour(student.defaultTime), lessonType: student.lessonType, isShared: false });
-                    syncToCloud(); render();
-                }
-            }
-            state.dragData = null;
-        }
-
-        // Touch drag and drop (Mobile/Tablet)
-        let touchDragElement = null;
-        let touchStartX = 0, touchStartY = 0;
-        let currentDropTarget = null;
-
-        function handleTouchStart(e, type, id) {
-            const touch = e.touches[0];
-            touchStartX = touch.clientX;
-            touchStartY = touch.clientY;
-            state.dragData = { type, id };
-
-            // Create floating element
-            const el = e.currentTarget;
-            touchDragElement = el.cloneNode(true);
-            touchDragElement.classList.add('touch-dragging');
-            touchDragElement.style.width = el.offsetWidth + 'px';
-            touchDragElement.style.left = touch.clientX - el.offsetWidth / 2 + 'px';
-            touchDragElement.style.top = touch.clientY - 20 + 'px';
-            document.body.appendChild(touchDragElement);
-
-            if (type === 'student' && window.innerWidth < 1024) {
-                state.showRoster = false;
-                render();
-            }
-        }
-
-        function handleTouchMove(e) {
-            if (!touchDragElement || !state.dragData) return;
-            e.preventDefault();
-
-            const touch = e.touches[0];
-            touchDragElement.style.left = touch.clientX - touchDragElement.offsetWidth / 2 + 'px';
-            touchDragElement.style.top = touch.clientY - 20 + 'px';
-
-            // Find drop target
-            const elemBelow = document.elementFromPoint(touch.clientX, touch.clientY);
-            const cell = elemBelow?.closest('.calendar-cell');
-
-            // Clear previous target
-            if (currentDropTarget && currentDropTarget !== cell) {
-                currentDropTarget.classList.remove('touch-drop-target');
-            }
-
-            if (cell) {
-                cell.classList.add('touch-drop-target');
-                currentDropTarget = cell;
-            } else {
-                currentDropTarget = null;
-            }
-        }
-
-        function handleTouchEnd(e) {
-            if (!touchDragElement) return;
-
-            // Clean up floating element
-            touchDragElement.remove();
-            touchDragElement = null;
-
-            // Clear drop target highlight
-            if (currentDropTarget) {
-                currentDropTarget.classList.remove('touch-drop-target');
-                const date = currentDropTarget.dataset.date;
-                if (date) {
-                    executeDrop(date);
-                }
-                currentDropTarget = null;
-            } else {
-                state.dragData = null;
-            }
-        }
-
-        function attachTouchListeners() {
-            // Lesson items
-            document.querySelectorAll('.lesson-item').forEach(el => {
-                const id = el.getAttribute('data-lesson-id');
-                if (id) {
-                    el.addEventListener('touchstart', (e) => handleTouchStart(e, 'lesson', id), { passive: false });
-                }
-            });
-
-            // Student cards
-            document.querySelectorAll('.student-card').forEach(el => {
-                const id = el.getAttribute('data-student-id');
-                if (id) {
-                    el.addEventListener('touchstart', (e) => handleTouchStart(e, 'student', id), { passive: false });
-                }
-            });
-
-            document.addEventListener('touchmove', handleTouchMove, { passive: false });
-            document.addEventListener('touchend', handleTouchEnd);
-        }
-
-        // Lesson modals
-        function openAddLesson(date) {
-            const html = `
-        <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onclick="closeModal(event)">
-          <div class="bg-white rounded-lg p-6 w-full max-w-md" onclick="event.stopPropagation()">
-            <h2 class="text-xl font-bold mb-4 text-wood-800">予定を追加</h2>
-            <form onsubmit="saveLesson(event, null, '${date}')">
-              <div class="space-y-4">
-                <div><label class="block text-sm font-medium mb-1">レッスン生名</label><input type="text" name="studentName" required class="w-full border rounded px-3 py-2"></div>
-                <div class="grid grid-cols-2 gap-4">
-                  <div><label class="block text-sm font-medium mb-1">開始時間</label><select name="startTime" onchange="autoEndTime(this)" class="w-full border rounded px-3 py-2">${timeOptions().map(t => `<option value="${t}">${t}</option>`).join('')}</select></div>
-                  <div><label class="block text-sm font-medium mb-1">終了時間</label><select name="endTime" class="w-full border rounded px-3 py-2">${timeOptions().map(t => `<option value="${t}" ${t === '10:00' ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
-                </div>
-                <div><label class="block text-sm font-medium mb-1">レッスンタイプ</label><select name="lessonType" class="w-full border rounded px-3 py-2"><option value="acoustic">アコギ</option><option value="electric">エレキ</option></select></div>
-                <div class="flex items-center gap-2"><input type="checkbox" name="isShared" id="isShared"><label for="isShared" class="text-sm">共有イベント（全員に表示）</label></div>
-              </div>
-              <div class="mt-6 flex gap-2 justify-end">
-                <button type="button" onclick="closeModal()" class="px-4 py-2 border rounded hover:bg-gray-100">キャンセル</button>
-                <button type="submit" class="px-4 py-2 bg-wood-500 text-white rounded hover:bg-wood-600">保存</button>
-              </div>
-            </form>
-          </div>
-        </div>`;
-            document.body.insertAdjacentHTML('beforeend', html);
-        }
-
-        function openEditLesson(id) {
-            const l = state.lessons.find(x => x.id === id); if (!l) return;
-            const html = `
-        <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onclick="closeModal(event)">
-          <div class="bg-white rounded-lg p-6 w-full max-w-md" onclick="event.stopPropagation()">
-            <h2 class="text-xl font-bold mb-4 text-wood-800">予定を編集</h2>
-            <form onsubmit="saveLesson(event, '${id}', '${l.date}')">
-              <div class="space-y-4">
-                <div><label class="block text-sm font-medium mb-1">レッスン生名</label><input type="text" name="studentName" value="${l.studentName}" required class="w-full border rounded px-3 py-2"></div>
-                <div class="grid grid-cols-2 gap-4">
-                  <div><label class="block text-sm font-medium mb-1">開始時間</label><select name="startTime" onchange="autoEndTime(this)" class="w-full border rounded px-3 py-2">${timeOptions().map(t => `<option value="${t}" ${t === l.startTime ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
-                  <div><label class="block text-sm font-medium mb-1">終了時間</label><select name="endTime" class="w-full border rounded px-3 py-2">${timeOptions().map(t => `<option value="${t}" ${t === l.endTime ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
-                </div>
-                <div><label class="block text-sm font-medium mb-1">レッスンタイプ</label><select name="lessonType" class="w-full border rounded px-3 py-2"><option value="acoustic" ${l.lessonType === 'acoustic' ? 'selected' : ''}>アコギ</option><option value="electric" ${l.lessonType === 'electric' ? 'selected' : ''}>エレキ</option></select></div>
-                <div class="flex items-center gap-2"><input type="checkbox" name="isShared" id="isSharedEdit" ${l.isShared ? 'checked' : ''}><label for="isSharedEdit" class="text-sm">共有イベント（全員に表示）</label></div>
-              </div>
-              <div class="mt-4 p-3 bg-wood-50 rounded-lg">
-                <p class="text-sm text-wood-700 mb-2">📅 別の日に移動・コピー</p>
                 <div class="flex gap-2">
-                  <button type="button" onclick="startSelectMode('copy', '${id}')" class="flex-1 px-3 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm">コピー</button>
-                  <button type="button" onclick="startSelectMode('move', '${id}')" class="flex-1 px-3 py-2 bg-green-500 text-white rounded hover:bg-green-600 text-sm">移動</button>
+                    <button onclick="App.goToday()" class="bg-wood-100 hover:bg-wood-200 px-3 py-1 rounded text-sm text-wood-800">今日</button>
+                    ${s.mode === 'teacher' ? `<button onclick="App.exportToGoogle()" class="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-sm">📅 Googleカレンダー</button>` : ''}
                 </div>
-              </div>
-              <div class="mt-4 flex gap-2 justify-end">
-                <button type="button" onclick="deleteLesson('${id}')" class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600">削除</button>
-                <button type="button" onclick="closeModal()" class="px-4 py-2 border rounded hover:bg-gray-100">キャンセル</button>
-                <button type="submit" class="px-4 py-2 bg-wood-500 text-white rounded hover:bg-wood-600">保存</button>
-              </div>
-            </form>
-          </div>
-        </div>`;
-            document.body.insertAdjacentHTML('beforeend', html);
-        }
+            </div>`;
+            },
 
-        function saveLesson(e, id, date) {
-            e.preventDefault();
-            const form = e.target;
-            const data = { id: id || generateId(), date, studentName: form.studentName.value, startTime: form.startTime.value, endTime: form.endTime.value, lessonType: form.lessonType.value, isShared: form.isShared.checked };
-            if (id) { const idx = state.lessons.findIndex(l => l.id === id); state.lessons[idx] = data; }
-            else state.lessons.push(data);
-            syncToCloud(); closeModal(); render();
-        }
+            roster() {
+                const students = StateManager.state.students;
+                const cardsHtml = students.map(s => `
+                <div class="student-card p-2 rounded border ${s.lessonType === 'acoustic' ? 'bg-acoustic-100 border-acoustic-300' : 'bg-electric-100 border-electric-300'}" 
+                     data-student-id="${s.id}" draggable="true" ondragstart="DragDrop.handleStudentStart(event, '${s.id}')">
+                    <div class="flex items-center justify-between">
+                        <div><div class="font-medium text-sm">${s.name}</div><div class="text-xs text-gray-600">${s.defaultTime} / ${s.lessonType === 'acoustic' ? 'アコギ' : 'エレキ'}</div></div>
+                        <div class="flex gap-1 items-center">
+                            <button onclick="SelectMode.startFromRoster('${s.id}')" class="text-xs bg-wood-500 text-white px-2 py-1 rounded hover:bg-wood-600">📅+</button>
+                            <button onclick="App.editStudent('${s.id}')" class="text-xs text-wood-600 hover:text-wood-800">編集</button>
+                            <button onclick="App.deleteStudent('${s.id}')" class="text-xs text-red-500 hover:text-red-700">削除</button>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
 
-        function deleteLesson(id) {
-            if (confirm('この予定を削除しますか？')) {
-                state.lessons = state.lessons.filter(l => l.id !== id);
-                syncToCloud(); closeModal(); render();
-            }
-        }
+                return `
+            <div class="bg-white rounded-lg shadow p-3">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="font-bold text-wood-800">レッスン生名簿</h3>
+                    <button onclick="App.openAddStudent()" class="bg-wood-500 hover:bg-wood-600 text-white px-2 py-1 rounded text-sm">+ 追加</button>
+                </div>
+                <div class="space-y-2 max-h-96 overflow-y-auto">
+                    ${cardsHtml}
+                    ${students.length === 0 ? '<p class="text-sm text-gray-500 text-center py-4">まだ生徒が登録されていません</p>' : ''}
+                </div>
+            </div>`;
+            },
 
-        function autoEndTime(el) { el.closest('form').endTime.value = addHour(el.value); }
-        function closeModal(e) { if (e && e.target !== e.currentTarget) return; document.querySelector('.fixed.inset-0')?.remove(); }
+            updateCalendarOnly() {
+                const container = document.querySelector('.grid.grid-cols-7.border-t');
+                if (!container) return;
+                const s = StateManager.state;
+                const isTeacher = s.mode === 'teacher';
+                const y = s.currentDate.getFullYear(), m = s.currentDate.getMonth();
+                const days = Utils.getCalendarDays(y, m);
+                const today = Utils.formatDate(new Date());
+                const lessons = StateManager.getFilteredLessons(isTeacher);
+                container.innerHTML = days.map(d => this.buildCalendarCell(d, lessons, isTeacher, today)).join('');
+            },
 
-        // 選択モード（モバイル用コピー/移動）
-        function startSelectMode(mode, lessonId) {
-            state.selectMode = mode;
-            state.selectedLessonId = lessonId;
-            closeModal();
-            render();
-            showSelectModeBanner();
-        }
-
-        function startAddFromRosterMode(studentId) {
-            state.selectMode = 'addFromRoster';
-            state.selectedStudentId = studentId;
-            render();
-            showSelectModeBanner();
-        }
-
-        function showSelectModeBanner() {
-            const existing = document.querySelector('.copy-mode-banner');
-            if (existing) existing.remove();
-
-            let message = '';
-            if (state.selectMode === 'copy') message = '📅 日付をタップしてコピー先を選択';
-            else if (state.selectMode === 'move') message = '📅 日付をタップして移動先を選択';
-            else if (state.selectMode === 'addFromRoster') message = '📅 日付をタップして予定を作成';
-
-            const banner = document.createElement('div');
-            banner.className = 'copy-mode-banner';
-            banner.innerHTML = `${message} <button onclick="cancelSelectMode()" style="margin-left:8px; background:rgba(255,255,255,0.2); padding:2px 8px; border-radius:10px;">✕ キャンセル</button>`;
-            document.body.appendChild(banner);
-            document.getElementById('app').classList.add('select-mode');
-        }
-
-        function cancelSelectMode() {
-            state.selectMode = null;
-            state.selectedLessonId = null;
-            state.selectedStudentId = null;
-            document.querySelector('.copy-mode-banner')?.remove();
-            document.getElementById('app').classList.remove('select-mode');
-            render();
-        }
-
-        function handleCalendarCellClick(date, isTeacher) {
-            if (state.selectMode && isTeacher) {
-                executeSelectMode(date);
-            } else if (isTeacher && !state.selectMode) {
-                openAddLesson(date);
-            }
-        }
-
-        function executeSelectMode(date) {
-            if (state.selectMode === 'copy' && state.selectedLessonId) {
-                const lesson = state.lessons.find(l => l.id === state.selectedLessonId);
-                if (lesson) {
-                    state.lessons.push({ ...lesson, id: generateId(), date });
-                    syncToCloud();
-                }
-            } else if (state.selectMode === 'move' && state.selectedLessonId) {
-                const lesson = state.lessons.find(l => l.id === state.selectedLessonId);
-                if (lesson) {
-                    lesson.date = date;
-                    syncToCloud();
-                }
-            } else if (state.selectMode === 'addFromRoster' && state.selectedStudentId) {
-                const student = state.students.find(s => s.id === state.selectedStudentId);
-                if (student) {
-                    state.lessons.push({
-                        id: generateId(),
-                        date,
-                        studentName: student.name,
-                        startTime: student.defaultTime,
-                        endTime: addHour(student.defaultTime),
-                        lessonType: student.lessonType,
-                        isShared: false
-                    });
-                    syncToCloud();
+            updateRosterOnly() {
+                const panel = document.getElementById('rosterPanel');
+                if (panel && StateManager.state.mode === 'teacher') {
+                    panel.innerHTML = this.roster();
                 }
             }
-            cancelSelectMode();
-        }
+        };
 
-        // Student management
-        function openAddStudent() {
-            const html = `
-        <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onclick="closeModal(event)">
-          <div class="bg-white rounded-lg p-6 w-full max-w-md" onclick="event.stopPropagation()">
-            <h2 class="text-xl font-bold mb-4 text-wood-800">生徒を追加</h2>
-            <form onsubmit="saveStudent(event, null)">
-              <div class="space-y-4">
-                <div><label class="block text-sm font-medium mb-1">名前</label><input type="text" name="name" required class="w-full border rounded px-3 py-2"></div>
-                <div><label class="block text-sm font-medium mb-1">デフォルト時間</label><select name="defaultTime" class="w-full border rounded px-3 py-2">${timeOptions().map(t => `<option value="${t}">${t}</option>`).join('')}</select></div>
-                <div><label class="block text-sm font-medium mb-1">レッスンタイプ</label><select name="lessonType" class="w-full border rounded px-3 py-2"><option value="acoustic">アコギ</option><option value="electric">エレキ</option></select></div>
-              </div>
-              <div class="mt-6 flex gap-2 justify-end">
-                <button type="button" onclick="closeModal()" class="px-4 py-2 border rounded hover:bg-gray-100">キャンセル</button>
-                <button type="submit" class="px-4 py-2 bg-wood-500 text-white rounded hover:bg-wood-600">保存</button>
-              </div>
-            </form>
-          </div>
-        </div>`;
-            document.body.insertAdjacentHTML('beforeend', html);
-        }
+        // ============================================================
+        // App Module - メインアプリケーション
+        // ============================================================
+        const App = {
+            syncInterval: null,
 
-        function editStudent(id) {
-            const s = state.students.find(x => x.id === id); if (!s) return;
-            const html = `
-        <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onclick="closeModal(event)">
-          <div class="bg-white rounded-lg p-6 w-full max-w-md" onclick="event.stopPropagation()">
-            <h2 class="text-xl font-bold mb-4 text-wood-800">生徒を編集</h2>
-            <form onsubmit="saveStudent(event, '${id}')">
-              <div class="space-y-4">
-                <div><label class="block text-sm font-medium mb-1">名前</label><input type="text" name="name" value="${s.name}" required class="w-full border rounded px-3 py-2"></div>
-                <div><label class="block text-sm font-medium mb-1">デフォルト時間</label><select name="defaultTime" class="w-full border rounded px-3 py-2">${timeOptions().map(t => `<option value="${t}" ${t === s.defaultTime ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
-                <div><label class="block text-sm font-medium mb-1">レッスンタイプ</label><select name="lessonType" class="w-full border rounded px-3 py-2"><option value="acoustic" ${s.lessonType === 'acoustic' ? 'selected' : ''}>アコギ</option><option value="electric" ${s.lessonType === 'electric' ? 'selected' : ''}>エレキ</option></select></div>
-              </div>
-              <div class="mt-6 flex gap-2 justify-end">
-                <button type="button" onclick="closeModal()" class="px-4 py-2 border rounded hover:bg-gray-100">キャンセル</button>
-                <button type="submit" class="px-4 py-2 bg-wood-500 text-white rounded hover:bg-wood-600">保存</button>
-              </div>
-            </form>
-          </div>
-        </div>`;
-            document.body.insertAdjacentHTML('beforeend', html);
-        }
+            init() {
+                if (StateManager.state.config) this.startSync();
+                this.render();
+            },
 
-        function saveStudent(e, id) {
-            e.preventDefault();
-            const form = e.target;
-            const data = { id: id || generateId(), name: form.name.value, defaultTime: form.defaultTime.value, lessonType: form.lessonType.value };
-            if (id) { const idx = state.students.findIndex(s => s.id === id); state.students[idx] = data; }
-            else state.students.push(data);
-            syncToCloud(); closeModal(); render();
-        }
+            startSync() {
+                if (this.syncInterval) clearInterval(this.syncInterval);
+                CloudAPI.syncFromCloud();
+                this.syncInterval = setInterval(() => CloudAPI.syncFromCloud(), Config.SYNC_INTERVAL);
+            },
 
-        function deleteStudent(id) {
-            if (confirm('この生徒を削除しますか？')) { state.students = state.students.filter(s => s.id !== id); syncToCloud(); render(); }
-        }
+            render() {
+                const app = document.getElementById('app');
+                const s = StateManager.state;
 
-        // Google Calendar export
-        function exportToGoogle() {
-            const y = state.currentDate.getFullYear(), m = state.currentDate.getMonth();
-            const monthLessons = state.lessons.filter(l => { const d = new Date(l.date); return d.getFullYear() === y && d.getMonth() === m; });
-            if (monthLessons.length === 0) { alert('この月に予定がありません'); return; }
-            let ics = 'BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Guitar Lesson//JP\n';
-            monthLessons.forEach(l => {
-                const dc = l.date.replace(/-/g, ''), sc = l.startTime.replace(':', '') + '00', ec = l.endTime.replace(':', '') + '00';
-                ics += `BEGIN:VEVENT\nDTSTART;TZID=Asia/Tokyo:${dc}T${sc}\nDTEND;TZID=Asia/Tokyo:${dc}T${ec}\nSUMMARY:${l.studentName}\nEND:VEVENT\n`;
-            });
-            ics += 'END:VCALENDAR';
-            const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' })); a.download = `lessons_${y}${String(m + 1).padStart(2, '0')}.ics`; a.click();
-        }
+                if (!s.config) { app.innerHTML = this.renderSetup(); return; }
+                if (!s.mode) { app.innerHTML = this.renderLogin(); return; }
 
-        function attachEventListeners() {
-            document.querySelectorAll('[ondragover]').forEach(el => el.addEventListener('dragleave', e => e.currentTarget.classList.remove('drag-over')));
-            attachTouchListeners();
-        }
+                app.innerHTML = `
+            <header class="bg-gradient-to-r from-wood-600 to-wood-700 text-white p-4 shadow-lg sticky top-0 z-40">
+                <div class="max-w-7xl mx-auto flex justify-between items-center flex-wrap gap-2">
+                    <h1 class="text-xl md:text-2xl font-bold flex items-center gap-2">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/></svg>
+                        レッスンスケジュール
+                    </h1>
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="text-xs ${s.syncing ? 'sync-indicator' : ''}">${s.lastSync ? '✓ 同期済' : '同期中...'}</span>
+                        ${s.mode === 'student' ? `<input type="text" id="searchInput" placeholder="名前で検索" value="${s.searchName}" oninput="StateManager.state.searchName = this.value; UIRenderer.updateCalendarOnly();" class="px-3 py-1 rounded text-gray-800 text-sm w-32">` : ''}
+                        <span class="text-sm bg-wood-500 px-2 py-1 rounded">${s.mode === 'teacher' ? '先生用' : 'レッスン生用'}</span>
+                        <button onclick="App.logout()" class="bg-wood-800 hover:bg-wood-900 px-3 py-1 rounded text-sm">ログアウト</button>
+                    </div>
+                </div>
+            </header>
+            <main class="max-w-7xl mx-auto p-2 md:p-4">
+                ${s.mode === 'teacher' ? this.renderTeacherView() : this.renderStudentView()}
+            </main>`;
+                DragDrop.attachListeners();
+            },
 
+            renderSetup() {
+                return `
+            <div class="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-wood-100 to-wood-200">
+                <div class="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
+                    <div class="text-center mb-6">
+                        <div class="w-16 h-16 bg-wood-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
+                        </div>
+                        <h1 class="text-2xl font-bold text-wood-800">初期設定</h1>
+                        <p class="text-wood-600 mt-2 text-sm">クラウド同期の設定を行います</p>
+                    </div>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">JSONBin.io APIキー</label>
+                            <input type="text" id="apiKey" placeholder="$2a$10$..." class="w-full px-4 py-3 border border-wood-300 rounded-lg focus:ring-2 focus:ring-wood-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Bin ID（既存データがある場合）</label>
+                            <input type="text" id="binId" placeholder="省略可能" class="w-full px-4 py-3 border border-wood-300 rounded-lg focus:ring-2 focus:ring-wood-500">
+                        </div>
+                        <button onclick="App.setupConfig()" class="w-full bg-wood-600 hover:bg-wood-700 text-white py-3 rounded-lg font-semibold transition">設定を保存</button>
+                    </div>
+                </div>
+            </div>`;
+            },
+
+            async setupConfig() {
+                const apiKey = document.getElementById('apiKey').value.trim();
+                let binId = document.getElementById('binId').value.trim();
+                if (!apiKey) { alert('APIキーを入力してください'); return; }
+                try {
+                    if (!binId) {
+                        binId = await CloudAPI.createBin(apiKey, { lessons: [], students: [], updatedAt: Date.now() });
+                        alert('新しいBinを作成しました。\n他のデバイスで同期するには以下のBin IDを使用してください:\n\n' + binId);
+                    }
+                    StateManager.state.config = { apiKey, binId };
+                    StateManager.saveConfig();
+                    this.startSync();
+                    this.render();
+                } catch (e) { alert('エラーが発生しました: ' + e.message); }
+            },
+
+            renderLogin() {
+                const s = StateManager.state;
+                return `
+            <div class="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-wood-100 to-wood-200">
+                <div class="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
+                    <div class="text-center mb-8">
+                        <div class="w-20 h-20 bg-wood-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/></svg>
+                        </div>
+                        <h1 class="text-2xl font-bold text-wood-800">レッスンスケジュール</h1>
+                        <p class="text-wood-600 mt-2">ギターレッスン予約管理</p>
+                        <p class="text-xs text-gray-500 mt-1">Bin ID: ${s.config.binId}</p>
+                    </div>
+                    <div class="space-y-4">
+                        <button onclick="App.enterStudent()" class="w-full bg-wood-500 hover:bg-wood-600 text-white py-3 rounded-lg font-semibold transition">レッスン生として入る</button>
+                        <div class="relative"><div class="absolute inset-0 flex items-center"><div class="w-full border-t border-gray-300"></div></div><div class="relative flex justify-center text-sm"><span class="px-2 bg-white text-gray-500">または</span></div></div>
+                        <div>
+                            <input type="password" id="teacherPass" placeholder="先生用パスワード(4桁)" maxlength="4" class="w-full px-4 py-3 border border-wood-300 rounded-lg focus:ring-2 focus:ring-wood-500 text-center text-xl tracking-widest">
+                            <button onclick="App.enterTeacher()" class="w-full mt-3 bg-wood-700 hover:bg-wood-800 text-white py-3 rounded-lg font-semibold transition">先生として入る</button>
+                        </div>
+                        <button onclick="App.resetConfig()" class="w-full text-sm text-gray-500 hover:text-gray-700 mt-4">設定をリセット</button>
+                    </div>
+                </div>
+            </div>`;
+            },
+
+            renderTeacherView() {
+                const s = StateManager.state;
+                return `
+            <div class="flex flex-col lg:flex-row gap-4">
+                <div class="flex-1">${UIRenderer.calendarHeader()}${UIRenderer.calendar(true)}</div>
+                <div class="lg:w-72 ${s.showRoster ? '' : 'hidden'}" id="rosterPanel">${UIRenderer.roster()}</div>
+            </div>
+            <button onclick="App.toggleRoster()" class="lg:hidden fixed bottom-4 right-4 bg-wood-600 text-white p-3 rounded-full shadow-lg z-50">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"/></svg>
+            </button>`;
+            },
+
+            renderStudentView() {
+                return `${UIRenderer.calendarHeader()}${UIRenderer.calendar(false)}`;
+            },
+
+            // Event handlers
+            enterStudent() { StateManager.state.mode = 'student'; this.render(); },
+            enterTeacher() {
+                if (document.getElementById('teacherPass').value === Config.TEACHER_PASSWORD) {
+                    StateManager.state.mode = 'teacher'; this.render();
+                } else alert('パスワードが違います');
+            },
+            logout() { StateManager.state.mode = null; StateManager.state.searchName = ''; this.render(); },
+            resetConfig() { if (confirm('設定をリセットしますか？')) { StateManager.resetConfig(); this.render(); } },
+            prevMonth() { StateManager.state.currentDate.setMonth(StateManager.state.currentDate.getMonth() - 1); this.render(); },
+            nextMonth() { StateManager.state.currentDate.setMonth(StateManager.state.currentDate.getMonth() + 1); this.render(); },
+            goToday() { StateManager.state.currentDate = new Date(); this.render(); },
+            toggleRoster() { StateManager.state.showRoster = !StateManager.state.showRoster; this.render(); },
+
+            handleCellClick(date) {
+                if (StateManager.state.selectMode) SelectMode.execute(date);
+                else this.openAddLesson(date);
+            },
+
+            openAddLesson(date) {
+                ModalManager.show('予定を追加', FormBuilder.lessonForm(null, date));
+            },
+
+            openEditLesson(id) {
+                const lesson = StateManager.findLesson(id);
+                if (lesson) ModalManager.show('予定を編集', FormBuilder.lessonForm(lesson));
+            },
+
+            saveLesson(e, id, date) {
+                e.preventDefault();
+                const form = e.target;
+                const data = {
+                    id: id || Utils.generateId(), date,
+                    studentName: form.studentName.value,
+                    startTime: form.startTime.value,
+                    endTime: form.endTime.value,
+                    lessonType: form.lessonType.value,
+                    isShared: form.isShared.checked
+                };
+                if (id) StateManager.updateLesson(id, data);
+                else StateManager.addLesson(data);
+                CloudAPI.syncToCloud();
+                ModalManager.close();
+                this.render();
+            },
+
+            deleteLesson(id) {
+                if (confirm('この予定を削除しますか？')) {
+                    StateManager.deleteLesson(id);
+                    CloudAPI.syncToCloud();
+                    ModalManager.close();
+                    this.render();
+                }
+            },
+
+            autoEndTime(el) { el.closest('form').endTime.value = Utils.addHour(el.value); },
+
+            openAddStudent() {
+                ModalManager.show('生徒を追加', FormBuilder.studentForm());
+            },
+
+            editStudent(id) {
+                const student = StateManager.findStudent(id);
+                if (student) ModalManager.show('生徒を編集', FormBuilder.studentForm(student));
+            },
+
+            saveStudent(e, id) {
+                e.preventDefault();
+                const form = e.target;
+                const data = {
+                    id: id || Utils.generateId(),
+                    name: form.name.value,
+                    defaultTime: form.defaultTime.value,
+                    lessonType: form.lessonType.value
+                };
+                if (id) StateManager.updateStudent(id, data);
+                else StateManager.addStudent(data);
+                CloudAPI.syncToCloud();
+                ModalManager.close();
+                this.render();
+            },
+
+            deleteStudent(id) {
+                if (confirm('この生徒を削除しますか？')) {
+                    StateManager.deleteStudent(id);
+                    CloudAPI.syncToCloud();
+                    this.render();
+                }
+            },
+
+            exportToGoogle() {
+                const s = StateManager.state;
+                const y = s.currentDate.getFullYear(), m = s.currentDate.getMonth();
+                const monthLessons = s.lessons.filter(l => {
+                    const d = new Date(l.date);
+                    return d.getFullYear() === y && d.getMonth() === m;
+                });
+                if (monthLessons.length === 0) { alert('この月に予定がありません'); return; }
+
+                let ics = 'BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Guitar Lesson//JP\n';
+                monthLessons.forEach(l => {
+                    const dc = l.date.replace(/-/g, '');
+                    const sc = l.startTime.replace(':', '') + '00';
+                    const ec = l.endTime.replace(':', '') + '00';
+                    ics += `BEGIN:VEVENT\nDTSTART;TZID=Asia/Tokyo:${dc}T${sc}\nDTEND;TZID=Asia/Tokyo:${dc}T${ec}\nSUMMARY:${l.studentName}\nEND:VEVENT\n`;
+                });
+                ics += 'END:VCALENDAR';
+
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' }));
+                a.download = `lessons_${y}${String(m + 1).padStart(2, '0')}.ics`;
+                a.click();
+            }
+        };
+
+        // ============================================================
         // Initialize
-        if (state.config) startSync();
-        render();
+        // ============================================================
+        App.init();
     </script>
 </body>
 
