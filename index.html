@@ -361,12 +361,28 @@
                 const l = lesson || { studentName: '', startTime: '09:00', endTime: '10:00', lessonType: 'acoustic', isShared: false };
                 const formDate = lesson ? lesson.date : date;
                 const formId = lesson ? lesson.id : 'null';
+                const students = StateManager.state.students;
+
+                // 名簿リスト（新規追加時のみ表示）
+                const studentListHtml = !isEdit && students.length > 0 ? `
+                <div class="mb-4 p-3 bg-wood-50 rounded-lg">
+                    <p class="text-sm text-wood-700 mb-2 font-medium">📋 名簿から選択</p>
+                    <div class="flex flex-wrap gap-2 max-h-24 overflow-y-auto">
+                        ${students.map(s => `
+                            <button type="button" onclick="App.fillFromStudent('${s.id}')" 
+                                class="px-3 py-1 text-sm rounded-full border ${s.lessonType === 'acoustic' ? 'bg-acoustic-100 border-acoustic-300 hover:bg-acoustic-200' : 'bg-electric-100 border-electric-300 hover:bg-electric-200'}">
+                                ${s.name}
+                            </button>
+                        `).join('')}
+                    </div>
+                </div>` : '';
 
                 return `
-            <form onsubmit="App.saveLesson(event, ${isEdit ? `'${formId}'` : 'null'}, '${formDate}')">
+            <form id="lessonForm" onsubmit="App.saveLesson(event, ${isEdit ? `'${formId}'` : 'null'}, '${formDate}')">
+                ${studentListHtml}
                 <div class="space-y-4">
                     <div><label class="block text-sm font-medium mb-1">レッスン生名</label>
-                        <input type="text" name="studentName" value="${l.studentName}" required class="w-full border rounded px-3 py-2"></div>
+                        <input type="text" name="studentName" id="studentNameInput" value="${l.studentName}" required class="w-full border rounded px-3 py-2"></div>
                     <div class="grid grid-cols-2 gap-4">
                         <div><label class="block text-sm font-medium mb-1">開始時間</label>
                             ${this.timeSelect('startTime', l.startTime, 'onchange="App.autoEndTime(this)"')}</div>
@@ -884,6 +900,18 @@
             },
 
             autoEndTime(el) { el.closest('form').endTime.value = Utils.addHour(el.value); },
+
+            fillFromStudent(studentId) {
+                const student = StateManager.findStudent(studentId);
+                if (!student) return;
+                const form = document.getElementById('lessonForm');
+                if (form) {
+                    form.studentName.value = student.name;
+                    form.startTime.value = student.defaultTime;
+                    form.endTime.value = Utils.addHour(student.defaultTime);
+                    form.lessonType.value = student.lessonType;
+                }
+            },
 
             openAddStudent() {
                 ModalManager.show('生徒を追加', FormBuilder.studentForm());
