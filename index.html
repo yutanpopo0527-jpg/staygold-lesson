@@ -25,6 +25,11 @@
             }
         }
     </script>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+
     <style>
         .calendar-cell {
             min-height: 80px;
@@ -117,11 +122,24 @@
         // Config Module - 設定・定数の一元管理
         // ============================================================
         const Config = {
-            API_URL: 'https://api.jsonbin.io/v3/b',
-            SYNC_INTERVAL: 5000,
             TEACHER_PASSWORD: '0927',
             TIME_RANGE: { start: 9, end: 21, step: 30 },
-            STORAGE_KEY: 'calendarConfig'
+            FIRESTORE_COLLECTION: 'lessonCalendarData',
+            FIRESTORE_DOC_ID: 'default',
+            // アルティメットカレンダー同期用
+            ULTIMATE_COLLECTION: 'calendarData',
+            ULTIMATE_DOC_ID: 'default',
+            ULTIMATE_CALENDAR_NAME: 'レッスン',
+            ULTIMATE_CALENDAR_COLOR: '#d67c2a'
+        };
+
+        const FIREBASE_CONFIG = {
+            apiKey: "AIzaSyBjND4X2zaeBPIjyg3aRCJ_KcNURkTad5M",
+            authDomain: "ultimatecalendar-700dd.firebaseapp.com",
+            projectId: "ultimatecalendar-700dd",
+            storageBucket: "ultimatecalendar-700dd.firebasestorage.app",
+            messagingSenderId: "844693964053",
+            appId: "1:844693964053:web:970979490e474a1875951c"
         };
 
         // ============================================================
@@ -210,21 +228,10 @@
                 dragData: null,
                 showRoster: true,
                 syncing: false,
-                pendingSync: false,
                 lastSync: null,
-                config: JSON.parse(localStorage.getItem(Config.STORAGE_KEY) || 'null'),
                 selectMode: null,
                 selectedLessonId: null,
                 selectedStudentId: null
-            },
-
-            saveConfig() {
-                localStorage.setItem(Config.STORAGE_KEY, JSON.stringify(this.state.config));
-            },
-
-            resetConfig() {
-                localStorage.removeItem(Config.STORAGE_KEY);
-                this.state.config = null;
             },
 
             findLesson(id) {
@@ -273,73 +280,152 @@
         };
 
         // ============================================================
-        // CloudAPI Module - クラウド通信
+        // FirebaseAPI Module - Firebase Firestore リアルタイム同期
         // ============================================================
-        const CloudAPI = {
-            async createBin(apiKey, data) {
-                const res = await fetch(Config.API_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Master-Key': apiKey, 'X-Bin-Private': 'false' },
-                    body: JSON.stringify(data)
-                });
-                const json = await res.json();
-                if (!res.ok) throw new Error(json.message || 'Bin作成に失敗しました');
-                return json.metadata.id;
-            },
+        const FirebaseAPI = {
+            db: null,
+            unsubscribe: null,
+            isFirestoreUpdate: false,
+            pendingSave: false,
 
-            async updateBin(data) {
-                const { config } = StateManager.state;
-                await fetch(`${Config.API_URL}/${config.binId}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json', 'X-Master-Key': config.apiKey },
-                    body: JSON.stringify(data)
-                });
-            },
-
-            async readBin() {
-                const { config } = StateManager.state;
-                const res = await fetch(`${Config.API_URL}/${config.binId}/latest`, {
-                    headers: { 'X-Master-Key': config.apiKey }
-                });
-                const json = await res.json();
-                return json.record;
-            },
-
-            async syncToCloud() {
-                const s = StateManager.state;
-                if (!s.config || s.syncing) return;
-                s.syncing = true;
-                s.pendingSync = true;
+            init() {
                 try {
-                    await this.updateBin({ lessons: s.lessons, students: s.students, updatedAt: Date.now() });
-                    s.lastSync = new Date();
-                    s.pendingSync = false;
-                } catch (e) {
-                    console.error('Sync error:', e);
-                    s.pendingSync = false;
+                    const app = firebase.initializeApp(FIREBASE_CONFIG);
+                    this.db = firebase.firestore();
+                    this.startListener();
+                } catch (err) {
+                    console.error('Firebase init error:', err);
                 }
-                s.syncing = false;
-                App.render();
             },
 
-            async syncFromCloud() {
-                const s = StateManager.state;
-                if (!s.config || s.syncing || s.pendingSync) return;
-                try {
-                    const data = await this.readBin();
-                    if (data && !s.pendingSync) {
-                        s.lessons = data.lessons || [];
-                        s.students = data.students || [];
-                        s.lastSync = new Date();
-                        const activeEl = document.activeElement;
-                        if (activeEl && ['INPUT', 'SELECT', 'TEXTAREA'].includes(activeEl.tagName)) {
-                            UIRenderer.updateCalendarOnly();
-                            UIRenderer.updateRosterOnly();
-                        } else {
-                            App.render();
+            startListener() {
+                if (!this.db) return;
+
+                this.unsubscribe = this.db
+                    .collection(Config.FIRESTORE_COLLECTION)
+                    .doc(Config.FIRESTORE_DOC_ID)
+                    .onSnapshot((doc) => {
+                        // 保存中はonSnapshotの状態上書きをスキップ
+                        if (this.pendingSave) {
+                            StateManager.state.lastSync = new Date();
+                            return;
                         }
+
+                        if (doc.exists) {
+                            const data = doc.data();
+                            let changed = false;
+
+                            if (Array.isArray(data.lessons)) {
+                                StateManager.state.lessons = data.lessons;
+                                changed = true;
+                            }
+                            if (Array.isArray(data.students)) {
+                                StateManager.state.students = data.students;
+                                changed = true;
+                            }
+
+                            if (changed) {
+                                StateManager.state.lastSync = new Date();
+                                StateManager.state.syncing = false;
+
+                                // Firestore受信中のフラグ（ローカル保存のループ防止）
+                                this.isFirestoreUpdate = true;
+                                try {
+                                    const activeEl = document.activeElement;
+                                    if (activeEl && ['INPUT', 'SELECT', 'TEXTAREA'].includes(activeEl.tagName)) {
+                                        UIRenderer.updateCalendarOnly();
+                                        UIRenderer.updateRosterOnly();
+                                    } else {
+                                        App.render();
+                                    }
+                                } finally {
+                                    this.isFirestoreUpdate = false;
+                                }
+                            }
+                        }
+                        StateManager.state.lastSync = new Date();
+                        StateManager.state.syncing = false;
+                    }, (error) => {
+                        console.error('Firestore listener error:', error);
+                        StateManager.state.syncing = false;
+                    });
+            },
+
+            async saveToFirestore() {
+                if (!this.db || this.isFirestoreUpdate) return;
+
+                const s = StateManager.state;
+                s.syncing = true;
+                this.pendingSave = true;
+                try {
+                    await this.db
+                        .collection(Config.FIRESTORE_COLLECTION)
+                        .doc(Config.FIRESTORE_DOC_ID)
+                        .set({
+                            lessons: s.lessons,
+                            students: s.students,
+                            updatedAt: new Date().toISOString()
+                        });
+                    s.lastSync = new Date();
+
+                    // アルティメットカレンダーへの一方向同期
+                    this.syncToUltimate();
+                } catch (e) {
+                    console.error('Firestore save error:', e);
+                }
+                this.pendingSave = false;
+                s.syncing = false;
+            },
+
+            async syncToUltimate() {
+                if (!this.db) return;
+                try {
+                    const docRef = this.db
+                        .collection(Config.ULTIMATE_COLLECTION)
+                        .doc(Config.ULTIMATE_DOC_ID);
+
+                    const doc = await docRef.get();
+                    let ultimateData = doc.exists ? doc.data() : { calendars: [], events: [], templateFolders: [], theme: 'dark' };
+
+                    // 「レッスン」カレンダーが存在するか確認、なければ作成
+                    let lessonCalendar = ultimateData.calendars.find(c => c.name === Config.ULTIMATE_CALENDAR_NAME);
+                    if (!lessonCalendar) {
+                        lessonCalendar = {
+                            id: Utils.generateId(),
+                            name: Config.ULTIMATE_CALENDAR_NAME,
+                            color: Config.ULTIMATE_CALENDAR_COLOR,
+                            visible: true
+                        };
+                        ultimateData.calendars.push(lessonCalendar);
                     }
-                } catch (e) { console.error('Fetch error:', e); }
+
+                    // lessonCalendar ソースのイベントを全削除
+                    ultimateData.events = (ultimateData.events || []).filter(e => e.source !== 'lessonCalendar');
+
+                    // レッスンカレンダーの予定をアルティメットカレンダー形式に変換して追加
+                    const s = StateManager.state;
+                    s.lessons.forEach(lesson => {
+                        ultimateData.events.push({
+                            id: 'lc_' + lesson.id,
+                            title: lesson.studentName + (lesson.isShared ? ' ☆' : ''),
+                            description: (lesson.lessonType === 'acoustic' ? 'アコギ' : 'エレキ') + 'レッスン',
+                            allDay: false,
+                            start: lesson.date + 'T' + lesson.startTime + ':00',
+                            end: lesson.date + 'T' + lesson.endTime + ':00',
+                            calendarId: lessonCalendar.id,
+                            color: lessonCalendar.color,
+                            recurrence: null,
+                            source: 'lessonCalendar'
+                        });
+                    });
+
+                    await docRef.set({
+                        ...ultimateData,
+                        lastSaved: new Date().toISOString()
+                    });
+                } catch (e) {
+                    console.error('Ultimate Calendar sync error:', e);
+                }
             }
         };
 
@@ -509,13 +595,13 @@
                     const lesson = StateManager.findLesson(s.selectedLessonId);
                     if (lesson) {
                         StateManager.addLesson({ ...lesson, id: Utils.generateId(), date });
-                        CloudAPI.syncToCloud();
+                        FirebaseAPI.saveToFirestore();
                     }
                 } else if (s.selectMode === 'move' && s.selectedLessonId) {
                     const lesson = StateManager.findLesson(s.selectedLessonId);
                     if (lesson) {
                         lesson.date = date;
-                        CloudAPI.syncToCloud();
+                        FirebaseAPI.saveToFirestore();
                     }
                 } else if (s.selectMode === 'addFromRoster' && s.selectedStudentId) {
                     const student = StateManager.findStudent(s.selectedStudentId);
@@ -528,7 +614,7 @@
                             lessonType: student.lessonType,
                             isShared: false
                         });
-                        CloudAPI.syncToCloud();
+                        FirebaseAPI.saveToFirestore();
                     }
                 }
                 this.cancel();
@@ -575,7 +661,7 @@
                     if (lesson) {
                         if (mode === 'copy') StateManager.addLesson({ ...lesson, id: Utils.generateId(), date });
                         else lesson.date = date;
-                        CloudAPI.syncToCloud();
+                        FirebaseAPI.saveToFirestore();
                         App.render();
                     }
                 } else if (d.type === 'student') {
@@ -589,7 +675,7 @@
                             lessonType: student.lessonType,
                             isShared: false
                         });
-                        CloudAPI.syncToCloud();
+                        FirebaseAPI.saveToFirestore();
                         App.render();
                     }
                 }
@@ -724,24 +810,15 @@
         // App Module - メインアプリケーション
         // ============================================================
         const App = {
-            syncInterval: null,
-
             init() {
-                if (StateManager.state.config) this.startSync();
+                FirebaseAPI.init();
                 this.render();
-            },
-
-            startSync() {
-                if (this.syncInterval) clearInterval(this.syncInterval);
-                CloudAPI.syncFromCloud();
-                this.syncInterval = setInterval(() => CloudAPI.syncFromCloud(), Config.SYNC_INTERVAL);
             },
 
             render() {
                 const app = document.getElementById('app');
                 const s = StateManager.state;
 
-                if (!s.config) { app.innerHTML = this.renderSetup(); return; }
                 if (!s.mode) { app.innerHTML = this.renderLogin(); return; }
 
                 app.innerHTML = `
@@ -765,50 +842,7 @@
                 DragDrop.attachListeners();
             },
 
-            renderSetup() {
-                return `
-            <div class="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-wood-100 to-wood-200">
-                <div class="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
-                    <div class="text-center mb-6">
-                        <div class="w-16 h-16 bg-wood-500 rounded-full flex items-center justify-center mx-auto mb-4">
-                            <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
-                        </div>
-                        <h1 class="text-2xl font-bold text-wood-800">初期設定</h1>
-                        <p class="text-wood-600 mt-2 text-sm">クラウド同期の設定を行います</p>
-                    </div>
-                    <div class="space-y-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">JSONBin.io APIキー</label>
-                            <input type="text" id="apiKey" placeholder="$2a$10$..." class="w-full px-4 py-3 border border-wood-300 rounded-lg focus:ring-2 focus:ring-wood-500">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Bin ID（既存データがある場合）</label>
-                            <input type="text" id="binId" placeholder="省略可能" class="w-full px-4 py-3 border border-wood-300 rounded-lg focus:ring-2 focus:ring-wood-500">
-                        </div>
-                        <button onclick="App.setupConfig()" class="w-full bg-wood-600 hover:bg-wood-700 text-white py-3 rounded-lg font-semibold transition">設定を保存</button>
-                    </div>
-                </div>
-            </div>`;
-            },
-
-            async setupConfig() {
-                const apiKey = document.getElementById('apiKey').value.trim();
-                let binId = document.getElementById('binId').value.trim();
-                if (!apiKey) { alert('APIキーを入力してください'); return; }
-                try {
-                    if (!binId) {
-                        binId = await CloudAPI.createBin(apiKey, { lessons: [], students: [], updatedAt: Date.now() });
-                        alert('新しいBinを作成しました。\n他のデバイスで同期するには以下のBin IDを使用してください:\n\n' + binId);
-                    }
-                    StateManager.state.config = { apiKey, binId };
-                    StateManager.saveConfig();
-                    this.startSync();
-                    this.render();
-                } catch (e) { alert('エラーが発生しました: ' + e.message); }
-            },
-
             renderLogin() {
-                const s = StateManager.state;
                 return `
             <div class="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-wood-100 to-wood-200">
                 <div class="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
@@ -818,7 +852,6 @@
                         </div>
                         <h1 class="text-2xl font-bold text-wood-800">レッスンスケジュール</h1>
                         <p class="text-wood-600 mt-2">ギターレッスン予約管理</p>
-                        <p class="text-xs text-gray-500 mt-1">Bin ID: ${s.config.binId}</p>
                     </div>
                     <div class="space-y-4">
                         <button onclick="App.enterStudent()" class="w-full bg-wood-500 hover:bg-wood-600 text-white py-3 rounded-lg font-semibold transition">レッスン生として入る</button>
@@ -827,7 +860,6 @@
                             <input type="password" id="teacherPass" placeholder="先生用パスワード(4桁)" maxlength="4" class="w-full px-4 py-3 border border-wood-300 rounded-lg focus:ring-2 focus:ring-wood-500 text-center text-xl tracking-widest">
                             <button onclick="App.enterTeacher()" class="w-full mt-3 bg-wood-700 hover:bg-wood-800 text-white py-3 rounded-lg font-semibold transition">先生として入る</button>
                         </div>
-                        <button onclick="App.resetConfig()" class="w-full text-sm text-gray-500 hover:text-gray-700 mt-4">設定をリセット</button>
                     </div>
                 </div>
             </div>`;
@@ -857,7 +889,6 @@
                 } else alert('パスワードが違います');
             },
             logout() { StateManager.state.mode = null; StateManager.state.searchName = ''; this.render(); },
-            resetConfig() { if (confirm('設定をリセットしますか？')) { StateManager.resetConfig(); this.render(); } },
             prevMonth() { StateManager.state.currentDate.setMonth(StateManager.state.currentDate.getMonth() - 1); this.render(); },
             nextMonth() { StateManager.state.currentDate.setMonth(StateManager.state.currentDate.getMonth() + 1); this.render(); },
             goToday() { StateManager.state.currentDate = new Date(); this.render(); },
@@ -890,7 +921,7 @@
                 };
                 if (id) StateManager.updateLesson(id, data);
                 else StateManager.addLesson(data);
-                CloudAPI.syncToCloud();
+                FirebaseAPI.saveToFirestore();
                 ModalManager.close();
                 this.render();
             },
@@ -898,7 +929,7 @@
             deleteLesson(id) {
                 if (confirm('この予定を削除しますか？')) {
                     StateManager.deleteLesson(id);
-                    CloudAPI.syncToCloud();
+                    FirebaseAPI.saveToFirestore();
                     ModalManager.close();
                     this.render();
                 }
@@ -938,7 +969,7 @@
                 };
                 if (id) StateManager.updateStudent(id, data);
                 else StateManager.addStudent(data);
-                CloudAPI.syncToCloud();
+                FirebaseAPI.saveToFirestore();
                 ModalManager.close();
                 this.render();
             },
@@ -946,7 +977,7 @@
             deleteStudent(id) {
                 if (confirm('この生徒を削除しますか？')) {
                     StateManager.deleteStudent(id);
-                    CloudAPI.syncToCloud();
+                    FirebaseAPI.saveToFirestore();
                     this.render();
                 }
             },
