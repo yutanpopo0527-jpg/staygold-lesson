@@ -402,15 +402,27 @@
                     // lessonCalendar ソースのイベントを全削除
                     ultimateData.events = (ultimateData.events || []).filter(e => e.source !== 'lessonCalendar');
 
-                    // レッスンカレンダーの予定をアルティメットカレンダー形式に変換して追加
+                    // 既存イベント（source無し）のキーSetを作成して重複チェック用
+                    const existingKeys = new Set(
+                        ultimateData.events.map(e => e.title + '|' + (e.start || ''))
+                    );
+
+                    // レッスンカレンダーの予定をアルティメットカレンダー形式に変換して追加（重複スキップ）
                     const s = StateManager.state;
                     s.lessons.forEach(lesson => {
+                        const title = lesson.studentName + (lesson.isShared ? ' ☆' : '');
+                        const start = lesson.date + 'T' + lesson.startTime + ':00';
+                        const key = title + '|' + start;
+
+                        // 既存の非レッスンカレンダーイベントと重複する場合はスキップ
+                        if (existingKeys.has(key)) return;
+
                         ultimateData.events.push({
                             id: 'lc_' + lesson.id,
-                            title: lesson.studentName + (lesson.isShared ? ' ☆' : ''),
+                            title: title,
                             description: (lesson.lessonType === 'acoustic' ? 'アコギ' : 'エレキ') + 'レッスン',
                             allDay: false,
-                            start: lesson.date + 'T' + lesson.startTime + ':00',
+                            start: start,
                             end: lesson.date + 'T' + lesson.endTime + ':00',
                             calendarId: lessonCalendar.id,
                             color: lessonCalendar.color,
@@ -752,7 +764,11 @@
                 </div>
                 <div class="flex gap-2">
                     <button onclick="App.goToday()" class="bg-wood-100 hover:bg-wood-200 px-3 py-1 rounded text-sm text-wood-800">今日</button>
-                    ${s.mode === 'teacher' ? `<button onclick="App.exportToGoogle()" class="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-sm">📅 Googleカレンダー</button>` : ''}
+                    ${s.mode === 'teacher' ? `
+                        <button onclick="App.exportIcs()" class="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-sm">📤 ICSエクスポート</button>
+                        <button onclick="document.getElementById('icsFileInput').click()" class="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded text-sm">📥 ICSインポート</button>
+                        <input type="file" id="icsFileInput" accept=".ics" style="display:none" onchange="App.importIcs(event)">
+                    ` : ''}
                 </div>
             </div>`;
             },
@@ -982,28 +998,113 @@
                 }
             },
 
-            exportToGoogle() {
+            exportIcs() {
                 const s = StateManager.state;
-                const y = s.currentDate.getFullYear(), m = s.currentDate.getMonth();
-                const monthLessons = s.lessons.filter(l => {
-                    const d = new Date(l.date);
-                    return d.getFullYear() === y && d.getMonth() === m;
-                });
-                if (monthLessons.length === 0) { alert('この月に予定がありません'); return; }
+                const allLessons = s.lessons;
+                if (allLessons.length === 0) { alert('エクスポートする予定がありません'); return; }
 
-                let ics = 'BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Guitar Lesson//JP\n';
-                monthLessons.forEach(l => {
+                let ics = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Guitar Lesson//JP\r\n';
+                allLessons.forEach(l => {
                     const dc = l.date.replace(/-/g, '');
                     const sc = l.startTime.replace(':', '') + '00';
                     const ec = l.endTime.replace(':', '') + '00';
-                    ics += `BEGIN:VEVENT\nDTSTART;TZID=Asia/Tokyo:${dc}T${sc}\nDTEND;TZID=Asia/Tokyo:${dc}T${ec}\nSUMMARY:${l.studentName}\nEND:VEVENT\n`;
+                    const uid = l.id + '@lesson-calendar';
+                    ics += `BEGIN:VEVENT\r\nUID:${uid}\r\nDTSTART;TZID=Asia/Tokyo:${dc}T${sc}\r\nDTEND;TZID=Asia/Tokyo:${dc}T${ec}\r\nSUMMARY:${l.studentName}\r\nEND:VEVENT\r\n`;
                 });
                 ics += 'END:VCALENDAR';
 
                 const a = document.createElement('a');
-                a.href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' }));
-                a.download = `lessons_${y}${String(m + 1).padStart(2, '0')}.ics`;
+                a.href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar;charset=utf-8' }));
+                a.download = `lessons_all.ics`;
                 a.click();
+                URL.revokeObjectURL(a.href);
+            },
+
+            importIcs(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    const content = evt.target.result;
+                    const parsed = App.parseIcs(content);
+                    if (parsed.length === 0) { alert('インポート可能な予定が見つかりませんでした'); return; }
+
+                    // 既存予定のキーSet（タイトル+日付+開始時間+終了時間）
+                    const existingKeys = new Set(
+                        StateManager.state.lessons.map(l => l.studentName + '|' + l.date + '|' + l.startTime + '|' + l.endTime)
+                    );
+
+                    // 重複しない予定のみフィルタ
+                    const newLessons = parsed.filter(l => {
+                        const key = l.studentName + '|' + l.date + '|' + l.startTime + '|' + l.endTime;
+                        return !existingKeys.has(key);
+                    });
+
+                    const skipped = parsed.length - newLessons.length;
+                    newLessons.forEach(l => StateManager.addLesson(l));
+
+                    if (newLessons.length > 0) {
+                        FirebaseAPI.saveToFirestore();
+                        App.render();
+                    }
+
+                    let msg = `${newLessons.length}件の予定をインポートしました`;
+                    if (skipped > 0) msg += `\n（${skipped}件は重複のため除外）`;
+                    alert(msg);
+                };
+                reader.readAsText(file);
+                e.target.value = '';
+            },
+
+            parseIcs(content) {
+                const events = [];
+                const unfoldedContent = content.replace(/\r?\n[\t ]/g, '');
+                const vevents = unfoldedContent.split('BEGIN:VEVENT');
+
+                for (let i = 1; i < vevents.length; i++) {
+                    const vevent = vevents[i].split('END:VEVENT')[0];
+                    const lines = vevent.split(/\r?\n/);
+                    let title = '', startDate = '', startTime = '09:00', endTime = '10:00';
+
+                    lines.forEach(line => {
+                        if (line.startsWith('SUMMARY')) {
+                            const idx = line.indexOf(':');
+                            if (idx !== -1) title = line.substring(idx + 1).trim();
+                        } else if (line.startsWith('DTSTART')) {
+                            const idx = line.indexOf(':');
+                            if (idx !== -1) {
+                                const val = line.substring(idx + 1).replace('Z', '');
+                                if (val.length >= 8) {
+                                    startDate = `${val.substring(0,4)}-${val.substring(4,6)}-${val.substring(6,8)}`;
+                                }
+                                if (val.length >= 13) {
+                                    startTime = `${val.substring(9,11)}:${val.substring(11,13)}`;
+                                }
+                            }
+                        } else if (line.startsWith('DTEND')) {
+                            const idx = line.indexOf(':');
+                            if (idx !== -1) {
+                                const val = line.substring(idx + 1).replace('Z', '');
+                                if (val.length >= 13) {
+                                    endTime = `${val.substring(9,11)}:${val.substring(11,13)}`;
+                                }
+                            }
+                        }
+                    });
+
+                    if (title && startDate) {
+                        events.push({
+                            id: Utils.generateId(),
+                            date: startDate,
+                            studentName: title,
+                            startTime,
+                            endTime,
+                            lessonType: 'acoustic',
+                            isShared: false
+                        });
+                    }
+                }
+                return events;
             }
         };
 
